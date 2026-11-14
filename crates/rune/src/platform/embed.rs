@@ -90,8 +90,9 @@ impl<S: 'static> LayerHost<S> {
         let px_w = ((viewport.0.max(1.0) * scale).round() as u32).clamp(1, max_dim);
         let px_h = ((viewport.1.max(1.0) * scale).round() as u32).clamp(1, max_dim);
         let srgb_blend = true;
-        let (config, _) = crate::window::surface_config(&surface, &gpu.adapter, (px_w, px_h), srgb_blend)
+        let (mut config, alpha_mode) = crate::window::surface_config(&surface, &gpu.adapter, (px_w, px_h), srgb_blend)
             .ok_or_else(|| "CAMetalLayer has no supported wgpu surface configuration".to_owned())?;
+        if let Some(alpha_mode) = alpha_mode { config.alpha_mode = alpha_mode; }
         surface.configure(&gpu.device, &config);
         let target_format = config.format.remove_srgb_suffix();
         let mut renderer = Renderer::new(&gpu.device, target_format);
