@@ -203,6 +203,8 @@ pub struct LayerHost<S: 'static> {
     core: LayerHostCore,
     compositor: Option<Box<dyn Compositor<S>>>,
     rt: Runtime<S>,
+    /// What the last presented frame drew: a frame that would draw the same takes no drawable.
+    presented: Option<crate::window::Presented>,
 }
 
 impl<S: 'static> LayerHost<S> {
@@ -225,7 +227,7 @@ impl<S: 'static> LayerHost<S> {
         let (mut core, size, scale, now) = unsafe { LayerHostCore::new(layer, viewport, scale) }?;
         let mut rt = runtime_for(spec, state, size, Env::new(dark, scale), wake);
         core.configure_runtime(rt.core_mut(), now);
-        Ok(Self { core, compositor: None, rt })
+        Ok(Self { core, compositor: None, rt, presented: None })
     }
 
     /// Attaches a custom [`Compositor`] (e.g. for [`El::effect`](crate::El::effect) shader passes)
@@ -247,7 +249,17 @@ impl<S: 'static> LayerHost<S> {
     /// Updates the viewport in points and display scale, reconfiguring the Metal swapchain only
     /// when its clamped device-pixel dimensions change.
     pub fn resize(&mut self, viewport: (f32, f32), scale: f32) {
+        let before = (self.core.config.width, self.core.config.height);
         self.core.resize(self.rt.core_mut(), viewport, scale);
+        if (self.core.config.width, self.core.config.height) != before {
+            self.presented = None;
+        }
+    }
+
+    /// Forgets the last presented frame, so the next one draws even if it builds the same
+    /// instances (the layer's contents were lost or replaced).
+    pub fn redraw(&mut self) {
+        self.presented = None;
     }
 
     /// Steps animations and layout to `Instant::now()` and presents one Metal frame, following
@@ -305,6 +317,28 @@ impl<S: 'static> EmbedSurface for LayerHost<S> {
         let (rt, mut app) = self.rt.split_mut();
         f(&mut self.core.clock, rt, &mut app)
     }
+
+    fn presented(&self) -> Option<&crate::window::Presented> {
+        self.presented.as_ref()
+    }
+
+    fn frame_unchanged(&mut self) -> bool {
+        let config = self.core.config.clone();
+        self.presented.as_ref().is_some_and(|p| p.same_core(self.rt.core(), &config))
+    }
+
+    fn draws_own(&self) -> bool {
+        self.compositor.as_ref().is_some_and(|c| c.draws_own())
+    }
+
+    fn record_presented(&mut self) {
+        let composed = self.compositor.as_ref().is_some_and(|c| c.draws_own());
+        crate::window::Presented::record_core(&mut self.presented, self.rt.core(), &self.core.config, composed);
+    }
+
+    fn forget_presented(&mut self) {
+        self.presented = None;
+    }
 }
 
 #[cfg(all(test, target_os = "macos"))]
@@ -361,5 +395,42 @@ mod tests {
         let out = host.frame();
         assert!(out.drew);
         assert_eq!(seen.load(Ordering::Relaxed), 42);
+    }
+
+    #[test]
+    fn layer_host_takes_no_drawable_for_an_unchanged_frame() {
+        let layer: Retained<AnyObject> = unsafe { msg_send![AnyClass::get(c"CAMetalLayer").expect("QuartzCore"), new] };
+        let view = |s: &u32, _: &mut Cx<u32>| -> El { col().size(120.0, 80.0).child(col().size(10.0 + *s as f32, 20.0).fill(crate::Color::WHITE)) };
+        let spec = AppSpec::new("embed-unchanged", (120.0, 80.0), || 0u32, view);
+        let host = unsafe {
+            LayerHost::from_core_animation_layer(
+                Retained::as_ptr(&layer) as *mut std::ffi::c_void,
+                &spec,
+                0u32,
+                (120.0, 80.0),
+                2.0,
+                true,
+                Arc::new(|| {}),
+            )
+        };
+        let Ok(mut host) = host else { return };
+        // the first frame draws, and settles within a few
+        assert!(host.frame().drew);
+        for _ in 0..8 {
+            if !host.frame().animating { break; }
+        }
+        let rest = host.frame();
+        assert!(!rest.drew, "the same frame again took a drawable");
+        assert!(!rest.animating);
+        // a change draws again
+        host.runtime_mut().update_if(|s, tx| { *s += 5; tx.instant(); true });
+        assert!(host.frame().drew, "a changed frame did not draw");
+        // a resize and an explicit redraw draw
+        let _ = host.frame();
+        host.resize((140.0, 80.0), 2.0);
+        assert!(host.frame().drew, "a resized surface did not draw");
+        let _ = host.frame();
+        host.redraw();
+        assert!(host.frame().drew, "redraw did not draw");
     }
 }

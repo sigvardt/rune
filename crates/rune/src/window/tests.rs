@@ -114,6 +114,9 @@ fn a_frame_that_draws_the_same_pixels_is_the_same() {
     rt.text.atlas.dirty = None;
 
     // A GPU-filled glyph advances `rasterized` and queues a fill without marking CPU rows dirty.
+    // `On` (macOS's default) fills masks on the CPU, so this part asks for a mode that fills them
+    // on the GPU; the mode is what decides, and the rest of the test reads the atlas either way.
+    rt.text.set_font_smoothing(crate::text::FontSmoothing::WindfoilChromium);
     rt.text.atlas.outlines.set_support(crate::text::outline::Support::Drawn);
     let mut quads = Vec::new();
     let rasterized_before = rt.text.atlas.rasterized();

@@ -97,7 +97,7 @@ impl Presented {
         self.same_core(rt.core(), config)
     }
 
-    fn same_core(&self, rt: &RuntimeCore, config: &wgpu::SurfaceConfiguration) -> bool {
+    pub(crate) fn same_core(&self, rt: &RuntimeCore, config: &wgpu::SurfaceConfiguration) -> bool {
         let atlas = &rt.text.atlas;
         !self.composed && self.size == (config.width, config.height) && self.format == config.format && self.srgb == rt.srgb_blend()
             && self.scale == rt.env.scale && self.clear == rt.clear_color() && self.transparent == rt.transparent

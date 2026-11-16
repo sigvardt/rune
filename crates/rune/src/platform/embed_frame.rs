@@ -36,6 +36,16 @@ pub(crate) trait EmbedSurface {
     fn submit_and_present(&mut self, prepared: Self::Prepared) -> Instant;
     fn clock_and_rt_mut(&mut self) -> (&mut FrameClock, &mut RuntimeCore);
     fn with_driver<R>(&mut self, f: impl FnOnce(&mut FrameClock, &mut RuntimeCore, &mut dyn AppDriver) -> R) -> R;
+
+    /// The frame last presented, when the surface remembers one. A frame that would draw the
+    /// same takes no drawable (`Presented::same_core`).
+    fn presented(&self) -> Option<&crate::window::Presented> { None }
+    /// Whether the remembered frame draws what the runtime would, at the surface's own config.
+    fn frame_unchanged(&mut self) -> bool { false }
+    /// A compositor that draws of its own never rests on the last frame.
+    fn draws_own(&self) -> bool { false }
+    fn record_presented(&mut self) {}
+    fn forget_presented(&mut self) {}
 }
 
 struct EmbedFrameHost<'a, E: EmbedSurface> {
@@ -55,7 +65,39 @@ impl<E: EmbedSurface> FrameHost for EmbedFrameHost<'_, E> {
         }
         let (_, rt) = self.surface.clock_and_rt_mut();
         let _ = rt.follow_font_families();
-        Gate::Draw
+        // As a resting window does (`Presented::unchanged`): when the last frame is remembered
+        // and nothing of the surface's own is drawn over it, build this frame before taking a
+        // drawable, and present nothing when it draws the same.
+        if self.surface.presented().is_some() && !self.surface.draws_own() {
+            Gate::QuietTimer
+        } else {
+            Gate::Draw
+        }
+    }
+
+    fn step_quiet(&mut self) -> StepInfo {
+        let info = self.step_runtime();
+        // `step_runtime` records `t0`. A frame that draws nothing still reports its own time.
+        info
+    }
+
+    fn is_unchanged(&mut self, info: &StepInfo) -> bool {
+        let blend = self.surface.renderer_srgb_blend();
+        let (_, rt) = self.surface.clock_and_rt_mut();
+        blend == rt.srgb_blend() && !info.animating && !rt.has_pending_input() && !rt.live_pending()
+            && self.surface.frame_unchanged()
+    }
+
+    fn on_unchanged(&mut self, _info: &StepInfo) {
+        let t0 = self.t0.unwrap_or_else(crate::time::now);
+        let (_, rt) = self.surface.clock_and_rt_mut();
+        // The layer keeps the last frame. `stale` asks for another look; nothing else moves.
+        self.summary = FrameSummary {
+            drew: false,
+            animating: rt.stale(),
+            wake_after_secs: wake_after_secs(rt),
+            cpu_us: t0.elapsed().as_micros() as u64,
+        };
     }
 
     #[inline]
@@ -110,6 +152,10 @@ impl<E: EmbedSurface> FrameHost for EmbedFrameHost<'_, E> {
 
     #[inline]
     fn on_missed(&mut self, missed: Missed, stepped: bool) {
+        // A lost or outdated surface no longer shows the last frame.
+        if matches!(missed, Missed::Outdated) {
+            self.surface.forget_presented();
+        }
         let t0 = self.t0.unwrap_or_else(crate::time::now);
         let retry_now = missed == Missed::Outdated;
         let comp_animating = self.surface.compositor_animating();
@@ -144,6 +190,7 @@ impl<E: EmbedSurface> FrameHost for EmbedFrameHost<'_, E> {
 
     #[inline]
     fn settle(&mut self, submitted: Instant, info: &StepInfo) {
+        self.surface.record_presented();
         let t0 = self.t0.unwrap_or(submitted);
         let (_, rt) = self.surface.clock_and_rt_mut();
         self.summary = frame_summary_presented(rt, submitted, t0, info.animating);
