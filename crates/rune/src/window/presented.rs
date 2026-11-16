@@ -62,7 +62,7 @@ impl Presented {
     /// Whether `rt`'s built frame draws what this one did: the same instances into the same
     /// surface, with no glyph or image upload waiting, and nothing drawn outside the instances
     /// (a compositor, `SurfaceDraw` content, native materials).
-    pub(super) fn same<S: 'static>(&self, rt: &Runtime<S>, config: &wgpu::SurfaceConfiguration) -> bool {
+    pub(crate) fn same<S: 'static>(&self, rt: &Runtime<S>, config: &wgpu::SurfaceConfiguration) -> bool {
         let atlas = &rt.text.atlas;
         !self.composed && self.size == (config.width, config.height) && self.format == config.format && self.srgb == rt.srgb_blend()
             && self.scale == rt.env.scale && self.clear == rt.clear_color() && self.transparent == rt.transparent
