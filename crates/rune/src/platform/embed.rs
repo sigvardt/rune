@@ -58,6 +58,8 @@ pub struct LayerHost<S: 'static> {
     rt: Runtime<S>,
     clock: FrameClock,
     suspended: bool,
+    /// What the last presented frame drew: a frame that would draw the same takes no drawable.
+    presented: Option<crate::window::Presented>,
 }
 
 impl<S: 'static> LayerHost<S> {
@@ -116,6 +118,7 @@ impl<S: 'static> LayerHost<S> {
             rt,
             clock: FrameClock::new(now),
             suspended: viewport.0 <= 0.0 || viewport.1 <= 0.0,
+            presented: None,
         })
     }
 
@@ -151,11 +154,25 @@ impl<S: 'static> LayerHost<S> {
             self.config.width = px_w;
             self.config.height = px_h;
             self.surface.configure(&self.gpu.device, &self.config);
+            self.presented = None;
         }
         self.rt.set_viewport((px_w as f32 / scale, px_h as f32 / scale), scale);
     }
 
     /// Steps animations and layout to `Instant::now()` and presents one Metal frame.
+    fn wake_after(&self) -> Option<f64> {
+        self.rt.wake_deadline().and_then(|d| {
+            let elapsed = self.rt.wall_start?.elapsed().as_secs_f64();
+            Some((d - elapsed).max(0.0))
+        })
+    }
+
+    /// Forgets the last presented frame, so the next one draws even if it builds the same
+    /// instances (the layer's contents were lost or replaced).
+    pub fn redraw(&mut self) {
+        self.presented = None;
+    }
+
     pub fn frame(&mut self) -> EmbedFrame {
         if self.suspended {
             return EmbedFrame::default();
@@ -170,10 +187,25 @@ impl<S: 'static> LayerHost<S> {
         self.rt.refuse_file_dialog("native file dialogs are unsupported in embedded views");
 
         let comp_animating = self.compositor.as_ref().is_some_and(|c| c.animating());
+        // As a resting window does (`Presented::unchanged`): a frame that would draw the same
+        // instances into the same surface, with nothing moving or waiting, takes no drawable and
+        // presents nothing. The layer keeps showing the last frame.
+        if !animating && !comp_animating && !self.rt.has_pending_input() && !self.rt.live_pending()
+            && self.renderer.srgb_blend() == self.rt.srgb_blend()
+            && self.presented.as_ref().is_some_and(|p| p.same(&self.rt, &self.config))
+        {
+            return EmbedFrame {
+                drew: false,
+                animating: self.rt.stale(),
+                wake_after_secs: self.wake_after(),
+                cpu_us: t0.elapsed().as_micros() as u64,
+            };
+        }
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 self.surface.configure(&self.gpu.device, &self.config);
+                self.presented = None;
                 return EmbedFrame { animating: true, ..EmbedFrame::default() };
             }
             _ => return EmbedFrame { animating: animating || comp_animating, ..EmbedFrame::default() },
@@ -215,12 +247,11 @@ impl<S: 'static> LayerHost<S> {
         self.gpu.queue.present(frame);
 
         let cpu_us = t0.elapsed().as_micros() as u64;
-        let wake_after_secs = self.rt.wake_deadline().and_then(|d| {
-            let elapsed = self.rt.wall_start?.elapsed().as_secs_f64();
-            Some((d - elapsed).max(0.0))
-        });
+        let wake_after_secs = self.wake_after();
         let comp_animating = self.compositor.as_ref().is_some_and(|c| c.animating());
         let keep_ticking = animating || comp_animating || self.rt.has_pending_input() || self.rt.live_pending();
+        let composed = self.compositor.as_ref().is_some_and(|c| c.draws_own());
+        crate::window::Presented::record(&mut self.presented, &self.rt, &self.config, composed);
         EmbedFrame {
             drew: true,
             animating: keep_ticking,
@@ -282,5 +313,42 @@ mod tests {
         let out = host.frame();
         assert!(out.drew);
         assert_eq!(seen.load(Ordering::Relaxed), 42);
+    }
+
+    #[test]
+    fn layer_host_takes_no_drawable_for_an_unchanged_frame() {
+        let layer: Retained<AnyObject> = unsafe { msg_send![AnyClass::get(c"CAMetalLayer").expect("QuartzCore"), new] };
+        let view = |s: &u32, _: &mut Cx<u32>| -> El { col().size(120.0, 80.0).child(col().size(10.0 + *s as f32, 20.0).fill(crate::Color::WHITE)) };
+        let spec = AppSpec::new("embed-unchanged", (120.0, 80.0), || 0u32, view);
+        let host = unsafe {
+            LayerHost::from_core_animation_layer(
+                Retained::as_ptr(&layer) as *mut std::ffi::c_void,
+                &spec,
+                0u32,
+                (120.0, 80.0),
+                2.0,
+                true,
+                Arc::new(|| {}),
+            )
+        };
+        let Ok(mut host) = host else { return };
+        // the first frame draws, and settles within a few
+        assert!(host.frame().drew);
+        for _ in 0..8 {
+            if !host.frame().animating { break; }
+        }
+        let rest = host.frame();
+        assert!(!rest.drew, "the same frame again took a drawable");
+        assert!(!rest.animating);
+        // a change draws again
+        host.runtime_mut().update_if(|s, tx| { *s += 5; tx.instant(); true });
+        assert!(host.frame().drew, "a changed frame did not draw");
+        // a resize and an explicit redraw draw
+        let _ = host.frame();
+        host.resize((140.0, 80.0), 2.0);
+        assert!(host.frame().drew, "a resized surface did not draw");
+        let _ = host.frame();
+        host.redraw();
+        assert!(host.frame().drew, "redraw did not draw");
     }
 }
