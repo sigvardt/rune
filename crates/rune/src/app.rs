@@ -161,6 +161,15 @@ impl<S: 'static> App<S> {
         self
     }
 
+    /// Each `poll`'s later wakes replace those the poll before it asked for (the runtime's
+    /// `replace_poll_wakes`), for an app whose poll asks at every frame for each wake it still
+    /// needs. Off by default: a poll's wake stays a one-shot timer. An embedded host sets the
+    /// runtime's flag itself (`LayerHost::runtime_mut`); this sets it for the window Rune opens.
+    pub fn replace_poll_wakes(mut self, enabled: bool) -> Self {
+        self.runtime.replace_poll_wakes = enabled;
+        self
+    }
+
     /// How this app's windows rasterise and place glyphs (see [`crate::FontSmoothing`]):
     /// `On` by default on macOS and in a Mac's browser, `Off` elsewhere (CoreGraphics' pipeline
     /// without font smoothing's dilation, as `-webkit-font-smoothing: antialiased` draws).
