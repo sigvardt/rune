@@ -312,9 +312,11 @@ impl<S: 'static> LayerHost<S> {
             self.core.gpu.queue.submit([encoder.finish()]);
             self.core.gpu.queue.present(f);
         }
-        // As a window out of sight: an empty submission and a wait land the frees now.
+        // The device is shared with the hosts still in sight, so it is polled, not waited on: a
+        // wait held the main thread for every host's queued frames (119 ms at 2560x1410 2x). What
+        // the GPU still uses is freed at a later poll.
         self.core.gpu.queue.submit(std::iter::empty());
-        rune_gpu::health::poll(&self.core.gpu.device, wgpu::PollType::wait_indefinitely()).ok();
+        rune_gpu::health::poll(&self.core.gpu.device, wgpu::PollType::Poll).ok();
         self.core.renderer.trim_uploads();
     }
 
