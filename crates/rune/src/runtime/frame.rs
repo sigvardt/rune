@@ -289,7 +289,8 @@ impl<S: 'static> Runtime<S> {
     /// floor on timers (`window::timer_deadline`) still counts from that poll.
     pub(crate) fn schedule_pending_wakes(&mut self) {
         let wakes = std::mem::take(&mut self.pending.wakes);
-        self.schedule_wakes_from(self.now_clock(), wakes);
+        let poll = std::mem::take(&mut self.pending.poll_wakes);
+        self.schedule_tx_wakes_from(self.now_clock(), wakes, poll);
     }
 
     /// Sorted, de-duplicated deadlines on the logical clock.
@@ -304,6 +305,37 @@ impl<S: 'static> Runtime<S> {
         #[cfg(feature = "frame-profile")]
         crate::frame::live_log::waker(std::panic::Location::caller(), std::time::Duration::from_secs_f64((due - self.clock).max(0.0)));
         self.schedule_wakes_from(due, [std::time::Duration::ZERO]);
+    }
+
+    /// With `replace_poll_wakes`: `poll` runs again at every frame and asks again for what it
+    /// still waits on, so only its latest asks stand: a poll's later wakes replace those the poll before it asked for. Kept
+    /// all, every frame of a burst (a key's) left its poll's wake behind, each of those woke a
+    /// frame whose poll asked again, and a poll that asks every 100 ms woke its host about once a
+    /// frame for good. Next-frame asks (`ZERO`) stay as they were. The new asks are scheduled
+    /// where the poll's wakes always were (`schedule_tx_wakes_from`), so they count from the same
+    /// time as before.
+    pub(super) fn take_poll_wake(&mut self, one: &mut Tx) {
+        if !self.replace_poll_wakes {
+            return;
+        }
+        for old in std::mem::take(&mut self.poll_deadlines) {
+            if let Ok(index) = self.wake_deadlines.binary_search_by(|t| t.total_cmp(&old)) {
+                self.wake_deadlines.remove(index);
+            }
+        }
+        self.pending.poll_wakes.clear();
+        one.poll_wakes.extend(one.wakes.iter().copied().filter(|d| !d.is_zero()));
+        one.wakes.retain(|d| d.is_zero());
+    }
+
+    /// Schedules a transaction's wakes from `now`, keeping note of the poll's (`take_poll_wake`).
+    pub(super) fn schedule_tx_wakes_from(&mut self, now: f64, wakes: Vec<std::time::Duration>, poll: Vec<std::time::Duration>) {
+        self.schedule_wakes_from(now, wakes);
+        for delay in poll {
+            let deadline = now + delay.as_secs_f64();
+            self.schedule_wakes_from(now, [delay]);
+            if !self.poll_deadlines.contains(&deadline) { self.poll_deadlines.push(deadline); }
+        }
     }
 
     pub(super) fn schedule_wakes_from(&mut self, now: f64, wakes: impl IntoIterator<Item = std::time::Duration>) {
@@ -532,6 +564,7 @@ impl<S: 'static> Runtime<S> {
                 why |= CommitWhy::POLL;
                 self.watch.meter.poll();
             }
+            self.take_poll_wake(&mut one);
             merge(&mut tx, one);
         }
         if self.playground.as_ref().is_some_and(|p| p.polls()) {
@@ -665,7 +698,8 @@ impl<S: 'static> Runtime<S> {
             self.latch_requests(&mut tx);
         }
         self.release_files();
-        self.schedule_wakes(tx.wakes.drain(..));
+        let (wakes, poll) = (std::mem::take(&mut tx.wakes), std::mem::take(&mut tx.poll_wakes));
+        self.schedule_tx_wakes_from(self.clock, wakes, poll);
         self.capture_flights(&mut tx);
         if self.caret_watch && self.caret_moved(None) { self.dirty = true; }
         let read_moved = self.layout_reads_moved();

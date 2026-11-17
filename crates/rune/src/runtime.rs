@@ -482,6 +482,12 @@ pub struct Runtime<S: 'static> {
     /// Seconds since the first frame, unscaled (virtual when headless).
     pub clock: f64,
     wake_deadlines: Vec<f64>,
+    /// The deadlines the last `poll` asked for (`take_poll_wake`), among `wake_deadlines`.
+    poll_deadlines: Vec<f64>,
+    /// Each `poll`'s later wakes replace those the poll before it asked for, for an app whose
+    /// poll asks, every time it runs, for each wake it still needs. Off, a poll's wakes are
+    /// one-shot timers that later polls leave alone.
+    pub replace_poll_wakes: bool,
     timer_wake: timer_wake::TimerWake,
     idle_meter: crate::tooling::perf_warn::IdleMeter,
     watch: crate::tooling::perf_warn::Watch,
@@ -931,6 +937,8 @@ impl<S: 'static> Runtime<S> {
             poll: None,
             clock: 0.0,
             wake_deadlines: Vec::new(),
+            poll_deadlines: Vec::new(),
+            replace_poll_wakes: false,
             timer_wake: Default::default(),
             idle_meter: Default::default(),
             watch: Default::default(),

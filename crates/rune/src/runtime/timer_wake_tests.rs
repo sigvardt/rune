@@ -222,3 +222,42 @@ fn a_timer_frame_that_runs_covered_does_not_poll_again() {
     rt.hidden_wake();
     assert_eq!(rt.state.polls, polls + 2);
 }
+
+/// A poll asks again at every frame for what it still waits on (hq's spaces: every 100 ms while
+/// a read is out). Each frame of a burst used to leave its own wake behind, and each of those
+/// woke a frame whose poll asked again, so an idle host kept waking about once a frame.
+#[test]
+fn a_poll_s_wakes_do_not_pile_up_and_stop_once_it_asks_none() {
+    fn reading(s: &mut App, _: f64, tx: &mut Tx) -> bool {
+        s.polls += 1;
+        if !s.step { tx.wake_after(Duration::from_millis(100)); }
+        false
+    }
+    let mut rt = runtime(App::default());
+    rt.replace_poll_wakes = true;
+    rt.poll = Some(reading);
+    for _ in 0..15 {
+        advance(&mut rt, 1.0 / 60.0);
+        rt.frame(1.0 / 60.0);
+    }
+    assert_eq!(rt.wake_deadlines.len(), 1, "a burst of frames left one wake each: {:?}", rt.wake_deadlines);
+    // Idle: the space asks for nothing more, and nothing is left to wake it.
+    rt.state.step = true;
+    advance(&mut rt, 1.0 / 60.0);
+    rt.frame(1.0 / 60.0);
+    assert_eq!(rt.wake_deadline(), None, "an idle poll's host still has wakes: {:?}", rt.wake_deadlines);
+}
+
+/// What a handler asks for is its own: a poll's later wakes don't take it away.
+#[test]
+fn a_handler_s_wake_outlives_the_poll_s() {
+    let mut rt = runtime(App::default());
+    rt.replace_poll_wakes = true;
+    rt.update(|_, tx| tx.wake_after(Duration::from_secs(60)));
+    for _ in 0..3 {
+        advance(&mut rt, 1.0 / 60.0);
+        rt.frame(1.0 / 60.0);
+    }
+    assert_eq!(rt.wake_deadlines.len(), 2, "the poll's wake and the handler's: {:?}", rt.wake_deadlines);
+    assert!(rt.wake_deadlines.last().is_some_and(|t| *t > rt.clock + 50.0));
+}

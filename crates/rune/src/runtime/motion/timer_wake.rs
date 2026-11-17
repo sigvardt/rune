@@ -76,7 +76,8 @@ impl<S: 'static> Runtime<S> {
         }
         let stale = self.poll_alone();
         let wakes = std::mem::take(&mut self.pending.wakes);
-        self.schedule_wakes(wakes);
+        let poll = std::mem::take(&mut self.pending.poll_wakes);
+        self.schedule_tx_wakes_from(self.clock, wakes, poll);
         stale
     }
 
@@ -86,7 +87,8 @@ impl<S: 'static> Runtime<S> {
         if let Some(clock) = self.wall_clock() { self.clock = clock; }
         // An `update`'s `wake_after` counts from now; no frame may come to schedule it.
         let wakes = std::mem::take(&mut self.pending.wakes);
-        self.schedule_wakes(wakes);
+        let poll = std::mem::take(&mut self.pending.poll_wakes);
+        self.schedule_tx_wakes_from(self.clock, wakes, poll);
         // Due timers are spent with or without a poll, as a frame spends them; one left due
         // would wake the host again every frame interval.
         let due = self.wake_deadlines.partition_point(|t| *t <= self.clock);
@@ -102,6 +104,7 @@ impl<S: 'static> Runtime<S> {
         let asks_frame = one.srgb_blend.is_some_and(|b| b != self.srgb_blend) || one.font_smoothing.is_some_and(|m| m != self.text.smoothing) || self.changes_families(&one) || (one.blur && self.focus.path().is_some());
         self.latch_requests(&mut one);
         let stale = changed || one.frame_work() || patched || asks_frame;
+        self.take_poll_wake(&mut one);
         merge(&mut self.pending, one);
         stale
     }
@@ -128,7 +131,8 @@ impl<S: 'static> Runtime<S> {
             self.timer_wake = self.timer_wake.step(TimerWakeEvent::Asked { at: self.clock }).0;
         } else {
             let wakes = std::mem::take(&mut self.pending.wakes);
-            self.schedule_wakes(wakes);
+            let poll = std::mem::take(&mut self.pending.poll_wakes);
+            self.schedule_tx_wakes_from(self.clock, wakes, poll);
         }
     }
 
@@ -139,7 +143,8 @@ impl<S: 'static> Runtime<S> {
         self.timer_wake = next;
         let Some(polled) = polled else { return };
         let wakes = std::mem::take(&mut self.pending.wakes);
-        self.schedule_wakes_from(polled, wakes);
+        let poll = std::mem::take(&mut self.pending.poll_wakes);
+        self.schedule_tx_wakes_from(polled, wakes, poll);
     }
 
     /// Nothing but a timer asks this runtime for a frame.
