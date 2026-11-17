@@ -45,6 +45,7 @@ impl RuntimeCore {
             events: Vec::new(),
             stats: FrameStats::default(),
             ambient: None,
+            replace_poll_wakes: false,
             double_click_interval: 0.5,
             help_delay: 0.5,
             _core_end: CoreEnd,

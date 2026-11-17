@@ -344,6 +344,10 @@ runtime_core_fields! {
     /// Seconds until the next frame while only [`Cycle`](crate::el::Cycle)s move on screen
     /// (the shell sleeps until then instead of drawing every display frame).
     pub ambient: Option<f32>,
+    /// Each `poll`'s later wakes replace those the poll before it asked for, for an app whose
+    /// poll asks, every time it runs, for each wake it still needs. Off, a poll's wakes are
+    /// one-shot timers that later polls leave alone.
+    pub replace_poll_wakes: bool,
     pub instances: Vec<Instance>,
     /// Per instance, the `El::mark` of its nearest marked node (0 for none). Filled only while
     /// `track_marks` is set (a compositor is attached).

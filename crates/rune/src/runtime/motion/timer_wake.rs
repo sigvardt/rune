@@ -40,6 +40,8 @@ pub(crate) struct FrameState {
     #[cfg(debug_assertions)]
     pub(super) live_only_check: bool,
     wake_deadlines: Vec<f64>,
+    /// The deadlines the last `poll` asked for (`take_poll_wake`), among `wake_deadlines`.
+    poll_deadlines: Vec<f64>,
     timer_wake: TimerWake,
     pub(in crate::runtime) queue: ActionQueue,
     pub(in crate::runtime) live: live_latch::LiveLane,
@@ -54,6 +56,7 @@ impl FrameState {
             queue: ActionQueue::default(),
             pending: Tx::default(),
             wake_deadlines: Vec::new(),
+            poll_deadlines: Vec::new(),
             timer_wake: Default::default(),
             idle_meter: Default::default(),
             last_dt: 0.0,
@@ -219,6 +222,34 @@ impl FrameState {
     }
 
     #[inline]
+    /// With `replace_poll_wakes`: `poll` runs again at every frame and asks again for what it
+    /// still waits on, so only its latest asks stand. Kept all, every frame of a burst left its
+    /// poll's wake behind, and a poll that asks every 100 ms woke its host about once a frame.
+    /// Next-frame asks (`ZERO`) stay as they were. The new asks count from the same time as before.
+    pub(in crate::runtime) fn take_poll_wake(&mut self, replace: bool, one: &mut Tx) {
+        if !replace {
+            return;
+        }
+        for old in std::mem::take(&mut self.poll_deadlines) {
+            if let Ok(index) = self.wake_deadlines.binary_search_by(|t| t.total_cmp(&old)) {
+                self.wake_deadlines.remove(index);
+            }
+        }
+        self.pending.poll_wakes.clear();
+        one.poll_wakes.extend(one.wakes.iter().copied().filter(|d| !d.is_zero()));
+        one.wakes.retain(|d| d.is_zero());
+    }
+
+    /// Schedules a transaction's wakes from `now`, keeping note of the poll's (`take_poll_wake`).
+    pub(in crate::runtime) fn schedule_tx_wakes_from(&mut self, now: f64, wakes: impl IntoIterator<Item = std::time::Duration>, poll: impl IntoIterator<Item = std::time::Duration>) {
+        self.schedule_wakes_from(now, wakes);
+        for delay in poll {
+            let deadline = now + delay.as_secs_f64();
+            self.schedule_wakes_from(now, [delay]);
+            if !self.poll_deadlines.contains(&deadline) { self.poll_deadlines.push(deadline); }
+        }
+    }
+
     pub(in crate::runtime) fn schedule_wakes_from(&mut self, now: f64, wakes: impl IntoIterator<Item = std::time::Duration>) {
         for delay in wakes {
             let deadline = now + delay.as_secs_f64();
@@ -336,7 +367,8 @@ impl RuntimeCore {
         }
         let stale = self.poll_alone(app);
         let wakes = std::mem::take(&mut self.frame.pending.wakes);
-        self.schedule_wakes(wakes);
+        let poll = std::mem::take(&mut self.frame.pending.poll_wakes);
+        self.frame.schedule_tx_wakes_from(self.clock, wakes, poll);
         stale
     }
 
@@ -346,7 +378,8 @@ impl RuntimeCore {
         if let Some(clock) = self.wall_clock() { self.clock = clock; }
         // An `update`'s `wake_after` counts from now; no frame may come to schedule it.
         let wakes = std::mem::take(&mut self.frame.pending.wakes);
-        self.schedule_wakes(wakes);
+        let poll = std::mem::take(&mut self.frame.pending.poll_wakes);
+        self.frame.schedule_tx_wakes_from(self.clock, wakes, poll);
         // Due timers are spent with or without a poll, as a frame spends them; one left due
         // would wake the host again every frame interval.
         let due = self.frame.wake_deadlines.partition_point(|t| *t <= self.clock);
@@ -362,6 +395,7 @@ impl RuntimeCore {
         let asks_frame = one.srgb_blend.is_some_and(|b| b != self.paint.srgb_blend()) || one.font_smoothing.is_some_and(|m| m != self.text.smoothing) || self.changes_families(&one) || (one.blur && self.kbd.focus.path().is_some());
         self.latch_requests(app, &mut one);
         let stale = changed || one.frame_work() || patched || asks_frame;
+        self.frame.take_poll_wake(self.replace_poll_wakes, &mut one);
         merge(&mut self.frame.pending, one);
         stale
     }
@@ -388,7 +422,8 @@ impl RuntimeCore {
             self.frame.timer_wake = self.frame.timer_wake.step(TimerWakeEvent::Asked { at: self.clock }).0;
         } else {
             let wakes = std::mem::take(&mut self.frame.pending.wakes);
-            self.schedule_wakes(wakes);
+            let poll = std::mem::take(&mut self.frame.pending.poll_wakes);
+            self.frame.schedule_tx_wakes_from(self.clock, wakes, poll);
         }
     }
 
@@ -399,7 +434,8 @@ impl RuntimeCore {
         self.frame.timer_wake = next;
         let Some(polled) = polled else { return };
         let wakes = std::mem::take(&mut self.frame.pending.wakes);
-        self.schedule_wakes_from(polled, wakes);
+        let poll = std::mem::take(&mut self.frame.pending.poll_wakes);
+        self.frame.schedule_tx_wakes_from(polled, wakes, poll);
     }
 
     /// Nothing but a timer asks this runtime for a frame.

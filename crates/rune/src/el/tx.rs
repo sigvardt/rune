@@ -71,6 +71,9 @@ pub struct Tx {
     /// Elements to hold where they show across this commit (`Tx::keep_on_screen`).
     pub(crate) keep_on_screen: Vec<String>,
     pub(crate) wakes: Vec<std::time::Duration>,
+    /// The later `wakes` a `poll` asked for, set apart (`Runtime::take_poll_wake`): the next poll
+    /// replaces them.
+    pub(crate) poll_wakes: Vec<std::time::Duration>,
     pub(crate) shell: Option<Shell>,
     pub(crate) minimize_order: Option<std::num::NonZeroU64>,
     /// `Tx::toggle_maximized`.

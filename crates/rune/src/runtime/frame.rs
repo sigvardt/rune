@@ -241,6 +241,7 @@ impl RuntimeCore {
                 why |= CommitWhy::POLL;
                 self.commit.watch.meter.poll();
             }
+            self.frame.take_poll_wake(self.replace_poll_wakes, &mut one);
             merge(&mut tx, one);
         }
         if app.playground().is_some_and(|p| p.polls()) {
@@ -384,7 +385,8 @@ impl RuntimeCore {
             self.latch_requests(app, &mut tx);
         }
         self.release_files();
-        self.schedule_wakes(tx.wakes.drain(..));
+        let (wakes, poll) = (std::mem::take(&mut tx.wakes), std::mem::take(&mut tx.poll_wakes));
+        self.frame.schedule_tx_wakes_from(self.clock, wakes, poll);
         self.motion.capture_flights(&self.tree.nodes, &mut self.paint, &mut self.text, self.env.scale, self.viewport, self.t, &mut tx);
         if self.edit.caret_watch && self.caret_moved(None) { self.commit.dirty = true; }
         let read_moved = self.layout_reads_moved();

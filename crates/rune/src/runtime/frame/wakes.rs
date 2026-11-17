@@ -123,7 +123,8 @@ impl RuntimeCore {
     /// floor on timers (`window::timer_deadline`) still counts from that poll.
     pub(crate) fn schedule_pending_wakes(&mut self) {
         let wakes = std::mem::take(&mut self.frame.pending.wakes);
-        self.schedule_wakes_from(self.now_clock(), wakes);
+        let poll = std::mem::take(&mut self.frame.pending.poll_wakes);
+        self.frame.schedule_tx_wakes_from(self.now_clock(), wakes, poll);
     }
 
     /// Sorted, de-duplicated deadlines on the logical clock.
