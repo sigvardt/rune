@@ -29,7 +29,13 @@ fn poll(s: &mut App, _: f64, tx: &mut Tx) -> bool {
 }
 
 fn runtime(app: App) -> Runtime<App> {
+    runtime_with(app, false)
+}
+
+/// `runtime`, with `replace_poll_wakes` set before its first poll.
+fn runtime_with(app: App, replace_poll_wakes: bool) -> Runtime<App> {
     let mut rt = Runtime::new(app, view, (200.0, 50.0), Env::default());
+    rt.replace_poll_wakes = replace_poll_wakes;
     rt.poll = Some(poll);
     rt.wall_start = Some(crate::time::Instant::now());
     rt.frame(0.0);
@@ -233,8 +239,7 @@ fn a_poll_s_wakes_do_not_pile_up_and_stop_once_it_asks_none() {
         if !s.step { tx.wake_after(Duration::from_millis(100)); }
         false
     }
-    let mut rt = runtime(App::default());
-    rt.replace_poll_wakes = true;
+    let mut rt = runtime_with(App::default(), true);
     rt.poll = Some(reading);
     for _ in 0..15 {
         advance(&mut rt, 1.0 / 60.0);
@@ -251,8 +256,7 @@ fn a_poll_s_wakes_do_not_pile_up_and_stop_once_it_asks_none() {
 /// What a handler asks for is its own: a poll's later wakes don't take it away.
 #[test]
 fn a_handler_s_wake_outlives_the_poll_s() {
-    let mut rt = runtime(App::default());
-    rt.replace_poll_wakes = true;
+    let mut rt = runtime_with(App::default(), true);
     rt.update(|_, tx| tx.wake_after(Duration::from_secs(60)));
     for _ in 0..3 {
         advance(&mut rt, 1.0 / 60.0);
