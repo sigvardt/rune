@@ -205,6 +205,9 @@ pub struct LayerHost<S: 'static> {
     rt: Runtime<S>,
     /// What the last presented frame drew: a frame that would draw the same takes no drawable.
     presented: Option<crate::window::Presented>,
+    /// Out of sight since `hide`: the swapchain is 1×1 and the renderer holds nothing between
+    /// frames. `shown` is the view's size `show` configures again; `None` while in sight.
+    hidden: Option<(u32, u32)>,
 }
 
 impl<S: 'static> LayerHost<S> {
@@ -227,7 +230,7 @@ impl<S: 'static> LayerHost<S> {
         let (mut core, size, scale, now) = unsafe { LayerHostCore::new(layer, viewport, scale) }?;
         let mut rt = runtime_for(spec, state, size, Env::new(dark, scale), wake);
         core.configure_runtime(rt.core_mut(), now);
-        Ok(Self { core, compositor: None, rt, presented: None })
+        Ok(Self { core, compositor: None, rt, presented: None, hidden: None })
     }
 
     /// Attaches a custom [`Compositor`] (e.g. for [`El::effect`](crate::El::effect) shader passes)
@@ -251,6 +254,17 @@ impl<S: 'static> LayerHost<S> {
     pub fn resize(&mut self, viewport: (f32, f32), scale: f32) {
         let before = (self.core.config.width, self.core.config.height);
         self.core.resize(self.rt.core_mut(), viewport, scale);
+        // Hidden, the swapchain stays 1×1; `show` configures the size this resize remembered.
+        if let Some(shown) = self.hidden.as_mut() {
+            *shown = (self.core.config.width, self.core.config.height);
+            if (self.core.config.width, self.core.config.height) != (1, 1) {
+                self.core.config.width = 1;
+                self.core.config.height = 1;
+                if let Err(error) = crate::window::configure(&self.core.surface, &self.core.gpu, &self.core.config) {
+                    eprintln!("rune: embedded layer surface refused its hidden size: {error}");
+                }
+            }
+        }
         if (self.core.config.width, self.core.config.height) != before {
             self.presented = None;
         }
@@ -262,8 +276,67 @@ impl<S: 'static> LayerHost<S> {
         self.presented = None;
     }
 
+    /// The view went out of sight: gives back what a window out of sight does (`window::rest`), and
+    /// the window-sized drawables too. The swapchain becomes 1×1 and one 1×1 frame of the clear
+    /// colour is presented, so the layer lets go of the last full-size drawable it shows. A host
+    /// kept hidden then holds its runtime and pipelines, but no texture the size of the view.
+    /// `show` configures the full size again; its first frame makes what it draws into.
+    pub fn hide(&mut self) {
+        if self.hidden.is_some() {
+            return;
+        }
+        self.hidden = Some((self.core.config.width, self.core.config.height));
+        self.presented = None;
+        self.rt.images.rest();
+        self.core.renderer.give_back(true, &mut self.rt.text.atlas.resident_caches);
+        self.core.config.width = 1;
+        self.core.config.height = 1;
+        if let Err(error) = crate::window::configure(&self.core.surface, &self.core.gpu, &self.core.config) {
+            eprintln!("rune: embedded layer surface refused its hidden size: {error}");
+            return;
+        }
+        if let wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) = self.core.surface.get_current_texture() {
+            let view = f.texture.create_view(&wgpu::TextureViewDescriptor { format: Some(self.core.renderer.format()), ..Default::default() });
+            let [r, g, b, a] = self.rt.clear_color().map(f64::from);
+            let mut encoder = self.core.gpu.device.create_command_encoder(&Default::default());
+            drop(encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("hidden"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }), store: wgpu::StoreOp::Store },
+                })],
+                ..Default::default()
+            }));
+            self.core.gpu.queue.submit([encoder.finish()]);
+            self.core.gpu.queue.present(f);
+        }
+        // As a window out of sight: an empty submission and a wait land the frees now.
+        self.core.gpu.queue.submit(std::iter::empty());
+        rune_gpu::health::poll(&self.core.gpu.device, wgpu::PollType::wait_indefinitely()).ok();
+        self.core.renderer.trim_uploads();
+    }
+
+    /// Back in sight after `hide`: the swapchain takes the view's size again and the next frame
+    /// draws whatever it shows.
+    pub fn show(&mut self) {
+        let Some((width, height)) = self.hidden.take() else { return };
+        self.core.config.width = width;
+        self.core.config.height = height;
+        if let Err(error) = crate::window::configure(&self.core.surface, &self.core.gpu, &self.core.config) {
+            eprintln!("rune: embedded layer surface refused its shown size: {error}");
+        }
+        self.presented = None;
+    }
+
+    /// Whether `hide` let go of the view's textures and `show` has not made them again.
+    pub fn hidden(&self) -> bool {
+        self.hidden.is_some()
+    }
+
     /// Steps animations and layout to `Instant::now()` and presents one Metal frame, following
-    /// the shared [`crate::frame::host_step`] order.
+    /// the shared [`crate::frame::host_step`] order. A hidden host draws nothing.
     pub fn frame(&mut self) -> EmbedFrame {
         embed_frame::run_embed_frame(self).into()
     }
@@ -273,7 +346,7 @@ impl<S: 'static> EmbedSurface for LayerHost<S> {
     type Drawable = wgpu::SurfaceTexture;
     type Prepared = PreparedEmbedFrame;
 
-    fn suspended(&self) -> bool { self.core.suspended }
+    fn suspended(&self) -> bool { self.core.suspended || self.hidden.is_some() }
     fn renderer_srgb_blend(&self) -> bool { self.core.renderer.srgb_blend() }
     fn rt_srgb_blend(&self) -> bool { self.rt.core().srgb_blend() }
     fn reblend(&mut self) -> bool { self.core.reblend(self.rt.core_mut()) }
@@ -432,5 +505,31 @@ mod tests {
         let _ = host.frame();
         host.redraw();
         assert!(host.frame().drew, "redraw did not draw");
+    }
+
+    #[test]
+    fn layer_host_hidden_draws_nothing_and_shows_at_full_size() {
+        let layer: Retained<AnyObject> = unsafe { msg_send![AnyClass::get(c"CAMetalLayer").expect("QuartzCore"), new] };
+        let view = |_: &(), _: &mut Cx<()>| -> El { col().size(120.0, 80.0).fill(crate::Color::WHITE) };
+        let spec = AppSpec::new("embed-hidden", (120.0, 80.0), || (), view);
+        let host = unsafe {
+            LayerHost::from_core_animation_layer(Retained::as_ptr(&layer) as *mut std::ffi::c_void, &spec, (), (120.0, 80.0), 2.0, true, Arc::new(|| {}))
+        };
+        let Ok(mut host) = host else { return };
+        assert!(host.frame().drew);
+        host.hide();
+        assert!(host.hidden());
+        let size: objc2_core_foundation::CGSize = unsafe { msg_send![&*layer, drawableSize] };
+        assert_eq!((size.width, size.height), (1.0, 1.0), "the hidden swapchain kept its size");
+        assert!(!host.frame().drew, "a hidden host drew");
+        // a resize while hidden waits for the show
+        host.resize((140.0, 80.0), 2.0);
+        let size: objc2_core_foundation::CGSize = unsafe { msg_send![&*layer, drawableSize] };
+        assert_eq!((size.width, size.height), (1.0, 1.0));
+        host.show();
+        assert!(!host.hidden());
+        let size: objc2_core_foundation::CGSize = unsafe { msg_send![&*layer, drawableSize] };
+        assert_eq!((size.width, size.height), (280.0, 160.0), "the shown swapchain is not the view's size");
+        assert!(host.frame().drew, "the first frame after show did not draw");
     }
 }
