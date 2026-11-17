@@ -60,6 +60,9 @@ pub struct LayerHost<S: 'static> {
     suspended: bool,
     /// What the last presented frame drew: a frame that would draw the same takes no drawable.
     presented: Option<crate::window::Presented>,
+    /// Out of sight since `hide`: the swapchain is 1×1 and the renderer holds nothing between
+    /// frames; `config` keeps the full size `show` configures again.
+    hidden: bool,
 }
 
 impl<S: 'static> LayerHost<S> {
@@ -119,6 +122,7 @@ impl<S: 'static> LayerHost<S> {
             clock: FrameClock::new(now),
             suspended: viewport.0 <= 0.0 || viewport.1 <= 0.0,
             presented: None,
+            hidden: false,
         })
     }
 
@@ -153,7 +157,7 @@ impl<S: 'static> LayerHost<S> {
         if self.config.width != px_w || self.config.height != px_h {
             self.config.width = px_w;
             self.config.height = px_h;
-            self.surface.configure(&self.gpu.device, &self.config);
+            if !self.hidden { self.surface.configure(&self.gpu.device, &self.config); }
             self.presented = None;
         }
         self.rt.set_viewport((px_w as f32 / scale, px_h as f32 / scale), scale);
@@ -173,8 +177,67 @@ impl<S: 'static> LayerHost<S> {
         self.presented = None;
     }
 
+    /// The view went out of sight: gives back what a window out of sight does (`window::rest`), and
+    /// the window-sized drawables too. The swapchain becomes 1×1 and one 1×1 frame of the clear
+    /// colour is presented, so the layer lets go of the last full-size drawable it shows. A host
+    /// kept hidden then holds its runtime, atlas and pipelines, but no texture the size of the
+    /// view. `show` configures the full size again; its first frame makes what it draws into.
+    pub fn hide(&mut self) {
+        if self.hidden {
+            return;
+        }
+        self.hidden = true;
+        self.presented = None;
+        self.rt.text.rest();
+        self.rt.images.rest();
+        self.renderer.give_back(true, &mut self.rt.text.atlas.resident_caches);
+        let full = (self.config.width, self.config.height);
+        self.config.width = 1;
+        self.config.height = 1;
+        self.surface.configure(&self.gpu.device, &self.config);
+        if let wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) = self.surface.get_current_texture() {
+            let view = f.texture.create_view(&wgpu::TextureViewDescriptor { format: Some(self.renderer.format()), ..Default::default() });
+            let [r, g, b, a] = self.rt.clear_color().map(f64::from);
+            let mut encoder = self.gpu.device.create_command_encoder(&Default::default());
+            drop(encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("hidden"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }), store: wgpu::StoreOp::Store },
+                })],
+                ..Default::default()
+            }));
+            self.gpu.queue.submit([encoder.finish()]);
+            self.gpu.queue.present(f);
+        }
+        self.config.width = full.0;
+        self.config.height = full.1;
+        // As a window out of sight: an empty submission and a wait land the frees now.
+        self.gpu.queue.submit(std::iter::empty());
+        let _ = self.gpu.device.poll(wgpu::PollType::wait_indefinitely());
+        self.renderer.trim_uploads();
+    }
+
+    /// Back in sight after `hide`: the swapchain takes the view's size again and the next frame
+    /// draws whatever it shows.
+    pub fn show(&mut self) {
+        if !self.hidden {
+            return;
+        }
+        self.hidden = false;
+        self.surface.configure(&self.gpu.device, &self.config);
+        self.presented = None;
+    }
+
+    /// Whether `hide` let go of the view's textures and `show` has not made them again.
+    pub fn hidden(&self) -> bool {
+        self.hidden
+    }
+
     pub fn frame(&mut self) -> EmbedFrame {
-        if self.suspended {
+        if self.suspended || self.hidden {
             return EmbedFrame::default();
         }
         let t0 = Instant::now();
@@ -350,5 +413,31 @@ mod tests {
         let _ = host.frame();
         host.redraw();
         assert!(host.frame().drew, "redraw did not draw");
+    }
+
+    #[test]
+    fn layer_host_hidden_draws_nothing_and_shows_at_full_size() {
+        let layer: Retained<AnyObject> = unsafe { msg_send![AnyClass::get(c"CAMetalLayer").expect("QuartzCore"), new] };
+        let view = |_: &(), _: &mut Cx<()>| -> El { col().size(120.0, 80.0).fill(crate::Color::WHITE) };
+        let spec = AppSpec::new("embed-hidden", (120.0, 80.0), || (), view);
+        let host = unsafe {
+            LayerHost::from_core_animation_layer(Retained::as_ptr(&layer) as *mut std::ffi::c_void, &spec, (), (120.0, 80.0), 2.0, true, Arc::new(|| {}))
+        };
+        let Ok(mut host) = host else { return };
+        assert!(host.frame().drew);
+        host.hide();
+        assert!(host.hidden());
+        let size: objc2_core_foundation::CGSize = unsafe { msg_send![&*layer, drawableSize] };
+        assert_eq!((size.width, size.height), (1.0, 1.0), "the hidden swapchain kept its size");
+        assert!(!host.frame().drew, "a hidden host drew");
+        // a resize while hidden waits for the show
+        host.resize((140.0, 80.0), 2.0);
+        let size: objc2_core_foundation::CGSize = unsafe { msg_send![&*layer, drawableSize] };
+        assert_eq!((size.width, size.height), (1.0, 1.0));
+        host.show();
+        assert!(!host.hidden());
+        let size: objc2_core_foundation::CGSize = unsafe { msg_send![&*layer, drawableSize] };
+        assert_eq!((size.width, size.height), (280.0, 160.0), "the shown swapchain is not the view's size");
+        assert!(host.frame().drew, "the first frame after show did not draw");
     }
 }
