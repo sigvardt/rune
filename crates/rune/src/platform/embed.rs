@@ -214,9 +214,11 @@ impl<S: 'static> LayerHost<S> {
         }
         self.config.width = full.0;
         self.config.height = full.1;
-        // As a window out of sight: an empty submission and a wait land the frees now.
+        // The device is shared with the hosts still in sight, so it is polled, not waited on: a
+        // wait held the main thread for every host's queued frames (119 ms at 2560x1410 2x). What
+        // the GPU still uses is freed at a later poll.
         self.gpu.queue.submit(std::iter::empty());
-        let _ = self.gpu.device.poll(wgpu::PollType::wait_indefinitely());
+        let _ = self.gpu.device.poll(wgpu::PollType::Poll);
         self.renderer.trim_uploads();
     }
 
