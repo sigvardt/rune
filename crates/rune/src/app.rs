@@ -104,6 +104,8 @@ pub struct App<S: 'static> {
     pub(crate) modifier_keys: bool,
     pub(crate) tab_visits_controls: bool,
     pub(crate) srgb_blend: bool,
+    /// `App::replace_poll_wakes`: copied into the window's runtime before its first poll.
+    pub(crate) replace_poll_wakes: bool,
     pub(crate) font_smoothing: crate::FontSmoothing,
     pub(crate) dev_stats: Option<fn() -> String>,
     pub(crate) playground: Option<crate::Playground<S>>,
@@ -162,6 +164,7 @@ impl<S: 'static> App<S> {
             modifier_keys: false,
             tab_visits_controls: false,
             srgb_blend: true,
+            replace_poll_wakes: false,
             font_smoothing: crate::FontSmoothing::default(),
             dev_stats: None,
             playground: None,
@@ -175,6 +178,15 @@ impl<S: 'static> App<S> {
     /// says which encoding its passes must match.
     pub fn srgb_blend(mut self, enabled: bool) -> Self {
         self.srgb_blend = enabled;
+        self
+    }
+
+    /// Each `poll`'s later wakes replace those the poll before it asked for (the runtime's
+    /// `replace_poll_wakes`), for an app whose poll asks at every frame for each wake it still
+    /// needs. Off by default: a poll's wake stays a one-shot timer. An embedded host sets the
+    /// runtime's flag itself (`LayerHost::runtime_mut`); this sets it for the window Rune opens.
+    pub fn replace_poll_wakes(mut self, enabled: bool) -> Self {
+        self.replace_poll_wakes = enabled;
         self
     }
 

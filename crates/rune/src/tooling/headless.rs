@@ -71,6 +71,7 @@ pub(crate) fn headless_configured<S: 'static>(mut app: crate::app::App<S>, args:
     crate::tooling::interaction::gate::headless();
     let mut comp = app.compositor.take();
     let (srgb_blend, font_smoothing) = (app.srgb_blend, app.font_smoothing);
+    let replace_poll_wakes = app.replace_poll_wakes;
     let (on_focus, on_ime, on_mods) = (app.on_focus, app.on_ime, app.on_mods);
     let (on_reopen, on_open_url) = (app.on_reopen, app.on_open_url);
     // A `--realtime` run stands in for a window, so it starts the app's live work as one does.
@@ -115,6 +116,7 @@ pub(crate) fn headless_configured<S: 'static>(mut app: crate::app::App<S>, args:
     rt.transparent = transparent;
     rt.fit_height = fit_height;
     rt.set_srgb_blend(srgb_blend);
+    rt.replace_poll_wakes = replace_poll_wakes;
     rt.set_font_smoothing(font_smoothing);
     rt.set_modifier_keys(modifier_keys);
     rt.set_tab_visits_controls(tab_visits_controls);

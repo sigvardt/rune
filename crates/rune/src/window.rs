@@ -577,6 +577,7 @@ impl<S: 'static> Host<S> {
         let titlebar = app.titlebar.filter(|_| !options.borderless);
         let chrome = app.chrome;
         let (srgb_blend, font_smoothing) = (app.srgb_blend, app.font_smoothing);
+        let replace_poll_wakes = app.replace_poll_wakes;
         let modifier_keys = app.modifier_keys;
         let tab_visits_controls = app.tab_visits_controls;
         let fit_height = app.fit_content_height;
@@ -603,6 +604,7 @@ impl<S: 'static> Host<S> {
             spec.size = size;
             args.size = None;
         }
+        rt.replace_poll_wakes = replace_poll_wakes;
         rt.on_focus = on_focus;
         rt.on_visibility = on_visibility;
         rt.app_ime.hook = on_ime;
