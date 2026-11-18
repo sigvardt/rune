@@ -131,6 +131,7 @@ pub use layout::pill_chips::pill_chips;
 #[doc(hidden)]
 pub use layout::pretty::pretty_wrap;
 pub use layout::pretty::set_pretty_wrap;
+pub use layout::shape::set_core_text_breaks;
 pub use layout::rich::RichLayoutOptions;
 #[doc(hidden)]
 pub use layout::rich::TextInput;
@@ -289,6 +290,8 @@ pub struct TextSystem {
     faces_taken: usize,
     pub sans: String,
     pub mono: String,
+    /// Lines break as Core Text breaks them ([`set_core_text_breaks`] when this was made).
+    pub(crate) core_text_breaks: bool,
     symbol_families: Vec<&'static str>,
     /// The colour emoji family among `symbol_families`.
     emoji: Option<&'static str>,
@@ -406,6 +409,7 @@ impl TextSystem {
             families: (families.0.to_owned(), families.1.to_owned()),
             sans,
             mono,
+            core_text_breaks: layout::shape::core_text_breaks_now(),
             slot_system_mono: names_system_mono(families.0) || names_system_mono(families.1),
             fallbacks: system_fonts::Fallbacks::new(list, cjk),
             atlas: Atlas::new(),
@@ -445,6 +449,7 @@ impl TextSystem {
             faces_taken: 0,
             sans: String::new(),
             mono: String::new(),
+            core_text_breaks: false,
             symbol_families: Vec::new(),
             emoji: None,
             math: None,

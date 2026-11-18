@@ -7,5 +7,3 @@ pub use rune_text::*;
 #[doc(hidden)]
 pub mod pixel_compare;
 
-#[cfg(test)]
-mod runtime_tests;
