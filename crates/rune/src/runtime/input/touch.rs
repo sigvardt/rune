@@ -11,6 +11,13 @@ use super::*;
 const TOUCH_SLOP: f32 = 8.0;
 /// A finger held this long (seconds) before lifting throws nothing.
 const FLING_HOLD: f64 = 0.1;
+/// The share of the newest move in the speed a lifted finger throws with; the move before it
+/// has the rest. UIKit's pan, and so its scroll view, takes its release speed this way: measured
+/// in the iOS Simulator against `UIPanGestureRecognizer::velocity` on the same drags, from 235
+/// to 2835 points a second, it came within 7 every time, where the newest move alone ran up
+/// to 369 under it on a finger slowing as it lifts. The lift's own event is left out, as UIKit
+/// leaves it out.
+const FLING_NEWEST: f32 = 0.2;
 /// A finger held still this long (seconds) opens the menu under it (Chromium's
 /// `long_press_time_in_ms`).
 const LONG_PRESS: f64 = 0.5;
@@ -39,8 +46,10 @@ struct Finger {
     /// and that event's time.
     last: f32,
     at: f64,
-    /// Points per second along the pan's axis.
+    /// Points per second along the pan's axis: the speed it throws with (`FLING_NEWEST`).
     velocity: f32,
+    /// The newest move's own speed, which the next move weighs against its own.
+    segment: Option<f32>,
     mode: Mode,
     /// When (`now_clock`), still pending, it becomes a long press.
     hold_due: f64,
@@ -96,12 +105,12 @@ impl<S: 'static> Runtime<S> {
         // `El::touch_drags_at_once`: a drag from the first move, and no long press to cut it.
         if self.press_drags_at_once() {
             self.touch_scroll_end(scroll, 0.0);
-            self.touch.finger = Some(Finger { id, origin: (x, y), last: 0.0, at: time, velocity: 0.0, mode: Mode::Drag, hold_due: f64::INFINITY });
+            self.touch.finger = Some(Finger { id, origin: (x, y), last: 0.0, at: time, velocity: 0.0, segment: None, mode: Mode::Drag, hold_due: f64::INFINITY });
             return;
         }
         let hold_due = self.now_clock() + LONG_PRESS;
         self.wake_at(hold_due);
-        self.touch.finger = Some(Finger { id, origin: (x, y), last: 0.0, at: time, velocity: 0.0, mode: Mode::Pending { scroll }, hold_due });
+        self.touch.finger = Some(Finger { id, origin: (x, y), last: 0.0, at: time, velocity: 0.0, segment: None, mode: Mode::Pending { scroll }, hold_due });
     }
 
     fn touch_move(&mut self, id: u64, x: f32, y: f32, time: f64) {
@@ -118,7 +127,11 @@ impl<S: 'static> Runtime<S> {
         let f = self.touch.finger.as_mut().unwrap();
         let along = if f.mode.horizontal() { dx } else { dy };
         let dt = time - f.at;
-        if dt > 0.0 { f.velocity = (along - f.last) / dt as f32; }
+        if dt > 0.0 {
+            let segment = (along - f.last) / dt as f32;
+            f.velocity = f.segment.map_or(segment, |before| FLING_NEWEST * segment + (1.0 - FLING_NEWEST) * before);
+            f.segment = Some(segment);
+        }
         (f.last, f.at) = (along, time);
         match f.mode {
             Mode::Pan { scroll, .. } => self.touch_scroll_move(scroll, along),
@@ -264,6 +277,26 @@ mod tests {
         rt.frame(1.0 / 60.0);
         assert!(rt.state.taps.is_empty());
         assert!(!rt.touching());
+    }
+
+    /// Two drags recorded in the iOS Simulator (the same path, the events' times a little
+    /// apart), with the release speed UIKit's pan gave each; the lift is left out, as UIKit
+    /// leaves it out.
+    #[test]
+    fn a_lifted_finger_throws_with_the_speed_uikit_gives_the_same_drag() {
+        let path = [538.0, 501.33, 456.0, 408.67, 361.67, 319.0];
+        for (times, uikit) in [
+            ([0.0, 0.0167, 0.0333, 0.0500, 0.0667, 0.0831], -2775.4),
+            ([0.0, 0.0167, 0.0334, 0.0500, 0.0661, 0.0834], -2835.2),
+        ] {
+            let mut rt = rig();
+            rt.touch(1, TouchPhase::Started, 100.0, 230.0, 0.0);
+            for (y, t) in path.iter().zip(times).skip(1) {
+                rt.touch(1, TouchPhase::Moved, 100.0, 230.0 + (y - path[0]), t);
+            }
+            let thrown = rt.touch.finger.as_ref().unwrap().velocity;
+            assert!((thrown - uikit).abs() < 10.0, "throws {thrown}, UIKit {uikit}");
+        }
     }
 
     #[test]
