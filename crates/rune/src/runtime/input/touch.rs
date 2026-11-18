@@ -11,6 +11,13 @@ use super::*;
 const TOUCH_SLOP: f32 = 8.0;
 /// A finger held this long (seconds) before lifting throws nothing.
 const FLING_HOLD: f64 = 0.1;
+/// The share of the newest move in the speed a lifted finger throws with; the move before it
+/// has the rest. UIKit's pan, and so its scroll view, takes its release speed this way: measured
+/// in the iOS Simulator against `UIPanGestureRecognizer::velocity` on the same drags, from 235
+/// to 2835 points a second, it came within 7 every time, where the newest move alone ran up
+/// to 369 under it on a finger slowing as it lifts. The lift's own event is left out, as UIKit
+/// leaves it out.
+const FLING_NEWEST: f32 = 0.2;
 /// A finger held still this long (seconds) opens the menu under it (Chromium's
 /// `long_press_time_in_ms`).
 const LONG_PRESS: f64 = 0.5;
@@ -39,8 +46,10 @@ struct Finger {
     /// and that event's time.
     last: f32,
     at: f64,
-    /// Points per second along the pan's axis.
+    /// Points per second along the pan's axis: the speed it throws with (`FLING_NEWEST`).
     velocity: f32,
+    /// The newest move's own speed, which the next move weighs against its own.
+    segment: Option<f32>,
     mode: Mode,
     /// When (`now_clock`), still pending, it becomes a long press.
     hold_due: f64,
@@ -105,12 +114,12 @@ impl RuntimeCore {
         // `El::touch_drags_at_once`: a drag from the first move, and no long press to cut it.
         if self.press_drags_at_once() {
             self.touch_scroll_end(scroll, 0.0);
-            self.pointer.touch.finger = Some(Finger { id, origin: (x, y), last: 0.0, at: time, velocity: 0.0, mode: Mode::Drag, hold_due: f64::INFINITY });
+            self.pointer.touch.finger = Some(Finger { id, origin: (x, y), last: 0.0, at: time, velocity: 0.0, segment: None, mode: Mode::Drag, hold_due: f64::INFINITY });
             return;
         }
         let hold_due = self.now_clock() + LONG_PRESS;
         self.wake_at(hold_due);
-        self.pointer.touch.finger = Some(Finger { id, origin: (x, y), last: 0.0, at: time, velocity: 0.0, mode: Mode::Pending { scroll }, hold_due });
+        self.pointer.touch.finger = Some(Finger { id, origin: (x, y), last: 0.0, at: time, velocity: 0.0, segment: None, mode: Mode::Pending { scroll }, hold_due });
     }
 
     fn touch_move(&mut self, app: &dyn ViewDriver, id: u64, x: f32, y: f32, time: f64) {
@@ -127,7 +136,11 @@ impl RuntimeCore {
         let f = self.pointer.touch.finger.as_mut().unwrap();
         let along = if f.mode.horizontal() { dx } else { dy };
         let dt = time - f.at;
-        if dt > 0.0 { f.velocity = (along - f.last) / dt as f32; }
+        if dt > 0.0 {
+            let segment = (along - f.last) / dt as f32;
+            f.velocity = f.segment.map_or(segment, |before| FLING_NEWEST * segment + (1.0 - FLING_NEWEST) * before);
+            f.segment = Some(segment);
+        }
         (f.last, f.at) = (along, time);
         match f.mode {
             Mode::Pan { scroll, .. } => self.touch_scroll_move(scroll, along),
@@ -186,3 +199,11 @@ impl RuntimeCore {
 #[cfg(test)]
 #[path = "touch_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+impl<S: 'static> Runtime<S> {
+    /// The speed the held finger would throw with, for the release-speed tests.
+    fn throw_velocity(&self) -> f32 {
+        self.pointer.touch.finger.as_ref().map(|f| f.velocity).unwrap_or(0.0)
+    }
+}

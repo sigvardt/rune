@@ -55,6 +55,26 @@ fn a_drag_on_a_list_scrolls_it_without_clicking_and_flings_on() {
     assert!(offset(&rt) > lifted + 50.0, "and coasted on: {} after {lifted}", offset(&rt));
 }
 
+/// Two drags recorded in the iOS Simulator (the same path, the events' times a little
+/// apart), with the release speed UIKit's pan gave each; the lift is left out, as UIKit
+/// leaves it out.
+#[test]
+fn a_lifted_finger_throws_with_the_speed_uikit_gives_the_same_drag() {
+    let path = [538.0, 501.33, 456.0, 408.67, 361.67, 319.0];
+    for (times, uikit) in [
+        ([0.0, 0.0167, 0.0333, 0.0500, 0.0667, 0.0831], -2775.4),
+        ([0.0, 0.0167, 0.0334, 0.0500, 0.0661, 0.0834], -2835.2),
+    ] {
+        let mut rt = rig();
+        rt.touch(1, TouchPhase::Started, 100.0, 230.0, 0.0);
+        for (y, t) in path.iter().zip(times).skip(1) {
+            rt.touch(1, TouchPhase::Moved, 100.0, 230.0 + (y - path[0]), t);
+        }
+        let thrown = rt.throw_velocity();
+        assert!((thrown - uikit).abs() < 10.0, "throws {thrown}, UIKit {uikit}");
+    }
+}
+
 #[test]
 fn a_finger_held_still_before_lifting_throws_nothing() {
     let mut rt = rig();
