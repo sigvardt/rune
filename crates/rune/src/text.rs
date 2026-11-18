@@ -154,6 +154,28 @@ use system_fonts::CJK_FONT_FILES;
 /// better; this is the one place to change.
 const LINE_BREAK: parley::LineBreak = parley::LineBreak::Strict;
 
+/// Whether text systems made from now on break lines as Core Text does ([`set_core_text_breaks`]).
+static CORE_TEXT_BREAKS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Lines break as Core Text (AppKit, UIKit, SwiftUI) breaks them instead of as Chromium does, in
+/// every text system made after this call: the Unicode line-break rules unchanged (a break after
+/// "/" before a letter, none after "-" before a digit, so a path or a link wraps at its slashes
+/// and an ID with hyphens stays whole), and a word too long for any line broken inside it, on a
+/// line of its own, as Core Text does. For an app that sits beside native views and must wrap as
+/// they do; call it before the first text is laid out.
+pub fn set_core_text_breaks(on: bool) {
+    CORE_TEXT_BREAKS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Core Text's breaks where they part from UAX #14's: a slash before a digit is a break when it
+/// is not inside a number ("join/" | "19%3a…", but "1/2" whole), where UAX #14's LB25 keeps
+/// "SY × NU" (measured against `CTTypesetterSuggestLineBreak`, `line_breaks_match_core_text`).
+static CORE_TEXT_LINE_BREAK_OVERRIDE: &parley::LineBreakOverrideFn = &(core_text_override as fn(parley::LineBreakContext) -> Option<bool>);
+
+fn core_text_override(cx: parley::LineBreakContext) -> Option<bool> {
+    (cx.before == '/' && cx.after.is_ascii_digit() && !cx.before_before.is_some_and(|c| c.is_ascii_digit())).then_some(true)
+}
+
 /// The family every stack ends in: in a browser, the face the page draws (`platform_face`).
 #[cfg(target_arch = "wasm32")]
 const PLATFORM_FAMILY: &[&str] = platform_face::FAMILY;
@@ -218,6 +240,8 @@ pub struct TextSystem {
     faces_taken: usize,
     pub sans: String,
     pub mono: String,
+    /// Lines break as Core Text breaks them ([`set_core_text_breaks`] when this was made).
+    pub(crate) core_text_breaks: bool,
     symbol_families: Vec<&'static str>,
     /// The colour emoji family among `symbol_families`.
     emoji: Option<&'static str>,
@@ -361,6 +385,7 @@ impl TextSystem {
             language_epoch: 0,
             faces_taken: 0,
             sans, mono,
+            core_text_breaks: CORE_TEXT_BREAKS.load(std::sync::atomic::Ordering::Relaxed),
             symbol_families: Vec::new(),
             emoji: None,
             math: None,
@@ -808,13 +833,15 @@ impl TextSystem {
         let off = [b"liga", b"clig", b"calt", b"dlig"].map(|tag| parley::FontFeature::new(parley::setting::Tag::new(tag), 0));
         let unligated: Vec<parley::FontFeature> = features.iter().chain(&off).copied().collect();
         type Spacings = [(std::ops::Range<usize>, f32)];
+        let core_text = self.core_text_breaks;
         let build = |lcx: &mut LayoutContext<Ink>, fcx: &mut FontContext, exact: &Spacings, widen: &Spacings, weights: &Spacings, fits: &Spacings, bold: &[(std::ops::Range<usize>, u16)]| {
             let mut b = lcx.ranged_builder(fcx, text, scale, true);
             b.set_base_direction(base);
             // Lines break where Chromium breaks them: after every run of spaces, even before a
             // closing bracket or comma (UAX #14 LB13 forbids that), and by Blink's ASCII pair
-            // table elsewhere, so "number }" wraps before "}" rather than before "number".
-            b.set_line_break_override(Some(parley::CHROMIUM_LINE_BREAK_OVERRIDE));
+            // table elsewhere, so "number }" wraps before "}" rather than before "number". Where
+            // they break as Core Text does, by UAX #14 itself (`set_core_text_breaks`).
+            b.set_line_break_override(Some(if core_text { CORE_TEXT_LINE_BREAK_OVERRIDE } else { parley::CHROMIUM_LINE_BREAK_OVERRIDE }));
             b.push_default(FontFamily::from(sans.as_slice()));
             b.push_default(StyleProperty::Locale(language));
             b.push_default(StyleProperty::FontSize(style.size));
@@ -844,6 +871,9 @@ impl TextSystem {
             b.push_default(StyleProperty::LineBreak(LINE_BREAK));
             if wrap_anywhere {
                 b.push_default(StyleProperty::OverflowWrap(parley::OverflowWrap::Anywhere));
+            } else if core_text {
+                // a word longer than a line breaks inside it, on a line of its own
+                b.push_default(StyleProperty::OverflowWrap(parley::OverflowWrap::BreakWord));
             }
             if base_spacing != 0.0 {
                 b.push_default(StyleProperty::LetterSpacing(base_spacing));

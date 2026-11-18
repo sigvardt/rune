@@ -27,14 +27,19 @@ pub(super) fn family_files(names: &[&str]) -> Vec<PathBuf> {
 }
 
 /// Every face file of family `name`, as CoreText matches the family name. San Francisco's
-/// families (`.SF NS`, `.SF NS Mono`) are hidden from CoreText's lists: their files sit beside
-/// the system UI font's, by name (`SFNS.ttf`, `SFNSMono.ttf`, `SFNSItalic.ttf`).
+/// families (`.SF NS`, `.SF NS Mono` on macOS, `.SF UI`, `.SF UI Mono` on iOS) are hidden from
+/// CoreText's lists: their files sit beside the system UI font's, named after its own file
+/// (`SFNS.ttf`, `SFNSMono.ttf`, `SFNSItalic.ttf` on macOS; `SFUI.ttf`, `SFUIMono.ttf`,
+/// `SFUIItalic.ttf` on iOS, where `SFNS.ttf` does not exist and the system font fell back to
+/// whatever covered the text).
 fn family_paths(name: &str) -> Vec<PathBuf> {
-    if let Some(rest) = name.strip_prefix(".SF NS").or(if name == "System Font" { Some("") } else { None }) {
-        let stem = format!("SFNS{}", rest.replace(' ', ""));
+    let rest = name.strip_prefix(".SF NS").or_else(|| name.strip_prefix(".SF UI")).or(if name == "System Font" { Some("") } else { None });
+    if let Some(rest) = rest {
         // SAFETY: the system UI font, read for its file only.
         let ui = unsafe { CTFont::new_ui_font_for_language(CTFontUIFontType::System, 0.0, None) };
-        let Some(dir) = ui.and_then(|f| path_of(unsafe { f.attribute(kCTFontURLAttribute) })).and_then(|p| p.parent().map(PathBuf::from)) else { return Vec::new() };
+        let Some(file) = ui.and_then(|f| path_of(unsafe { f.attribute(kCTFontURLAttribute) })) else { return Vec::new() };
+        let (Some(dir), Some(own)) = (file.parent(), file.file_stem().and_then(|s| s.to_str())) else { return Vec::new() };
+        let stem = format!("{own}{}", rest.replace(' ', ""));
         return [format!("{stem}.ttf"), format!("{stem}Italic.ttf")].into_iter().map(|f| dir.join(f)).filter(|p| p.exists()).collect();
     }
     // SAFETY: CoreText descriptors built from and read for their attributes only.
@@ -121,5 +126,26 @@ fn public_family(font: &CTFont) -> Option<String> {
             let name = d.attribute(kCTFontFamilyNameAttribute)?.downcast::<CFString>().ok()?.to_string();
             (!name.starts_with('.')).then_some(name)
         })
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// San Francisco's hidden families resolve to files named after the system UI font's own file
+    /// (`SFNS` on macOS, `SFUI` on iOS), whichever prefix names them.
+    #[test]
+    fn san_francisco_files_follow_the_ui_font() {
+        // SAFETY: the system UI font, read for its file only.
+        let ui = unsafe { CTFont::new_ui_font_for_language(CTFontUIFontType::System, 0.0, None) };
+        let file = ui.and_then(|f| path_of(unsafe { f.attribute(kCTFontURLAttribute) })).expect("the UI font's file");
+        let own = file.file_stem().and_then(|s| s.to_str()).expect("a file name").to_owned();
+        let system = family_paths("System Font");
+        assert_eq!(system.first(), Some(&file), "System Font is the UI font's own file");
+        for name in [".SF NS Mono", ".SF UI Mono"] {
+            let mono = family_paths(name);
+            assert!(!mono.is_empty(), "{name} finds a file");
+            assert!(mono.iter().all(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with(&format!("{own}Mono")))), "{name}: {mono:?}");
+        }
     }
 }

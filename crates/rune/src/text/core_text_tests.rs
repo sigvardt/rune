@@ -309,3 +309,81 @@ fn explicit_optical_size_picks_the_trak_entry() {
     let auto = TextStyle::new(17.0, 400.0).family(family);
     assert_eq!(widths(&mut ts, text, &[], auto.optical_size(17.0)), widths(&mut ts, text, &[], auto));
 }
+
+#[link(name = "CoreText", kind = "framework")]
+unsafe extern "C" {
+    fn CTFontCreateWithName(name: Ref, size: f64, matrix: Ref) -> Ref;
+    fn CTTypesetterCreateWithAttributedString(string: Ref) -> Ref;
+    fn CTTypesetterSuggestLineBreak(typesetter: Ref, start: isize, width: f64) -> isize;
+}
+
+/// Core Text's lines of ASCII `text` in `font` at `width` points, as byte ranges (UTF-16 offsets
+/// are bytes in ASCII).
+fn core_text_lines(text: &str, font: Ref, width: f64) -> Vec<std::ops::Range<usize>> {
+    unsafe {
+        let string = CFStringCreateWithBytes(std::ptr::null(), text.as_ptr(), text.len() as isize, 0x0800_0100, 0);
+        let attributed = CFAttributedStringCreate(std::ptr::null(), string, dictionary(&[kCTFontAttributeName], &[font]));
+        let typesetter = CTTypesetterCreateWithAttributedString(attributed);
+        let mut out = Vec::new();
+        let mut start = 0usize;
+        while start < text.len() {
+            let n = CTTypesetterSuggestLineBreak(typesetter, start as isize, width).max(1) as usize;
+            out.push(start..start + n);
+            start += n;
+        }
+        CFRelease(typesetter);
+        CFRelease(attributed);
+        CFRelease(string);
+        out
+    }
+}
+
+/// Synthetic notes with long unbroken words: paths, IDs, links, signs and brackets.
+const BREAK_STRINGS: [&str; 9] = [
+    "Local receipt: /Volumes/disk/projects/Some Folder/.cache-runtime/media/file-name-123-abc.pdf",
+    "Order ID: 53b09989-204e-42e3-82db-0b103267722d",
+    "Drive receipt: https://drive.example.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz/view?usp=sharing",
+    "See (the notes) here, or [this one], then: done. Also {a, b} and \"quoted words\" here.",
+    "Subtract -5 from x, then a-5 and 1/2 of 10-20, at 12:30 or 50% or $40.",
+    "Join https://meet.example.com/l/meetup-join/19%3ameeting_abc%40thread.v2/0?context=%7b%22Tid%22%7d now",
+    "A very-long-hyphenated-compound-word-that-goes-on and/or another/slash/word here",
+    "Paths a/b/cccc and aaa/bb/cccc, x/abc, then v2/0 and 3/4 of 1/12 or ref/2026/11/18/notes/0001",
+    "Minus-signs: a-1 b-c 10-20 x--y -3 and ranges 2026-11-18 or 08:00-09:30 in a long-run-on-sentence",
+];
+
+/// Rune's lines of `text` at `width` points, as byte ranges.
+fn rune_lines(ts: &mut TextSystem, text: &str, style: TextStyle, width: f32) -> Vec<std::ops::Range<usize>> {
+    let layout = ts.layout_rich(text, &[], style, 2.0, Some(width * 2.0));
+    layout.lines().map(|l| l.text_range()).collect()
+}
+
+/// With `set_core_text_breaks`, Rune breaks paths, links, IDs, signs and brackets where Core Text
+/// does, in Menlo at 12 points, 20 to 44 characters wide (`--nocapture` prints each).
+#[test]
+fn line_breaks_match_core_text() {
+    let mut ts = TextSystem::default();
+    ts.core_text_breaks = true;
+    let style = TextStyle::new(12.0, 400.0).family(Family::Named("Menlo"));
+    let font = unsafe {
+        let name = b"Menlo-Regular";
+        CTFontCreateWithName(CFStringCreateWithBytes(std::ptr::null(), name.as_ptr(), name.len() as isize, 0x0800_0100, 0), 12.0, std::ptr::null())
+    };
+    let advance = core_text_width("0", font);
+    let mut differ = 0;
+    for text in BREAK_STRINGS {
+        for chars in [20usize, 28, 36, 44] {
+            let width = advance * chars as f64 + 0.01;
+            let ct = core_text_lines(text, font, width);
+            let rn = rune_lines(&mut ts, text, style, width as f32);
+            let show = |v: &[std::ops::Range<usize>]| v.iter().map(|r| format!("[{}]", &text[r.clone()])).collect::<Vec<_>>().join(" ");
+            if ct != rn {
+                differ += 1;
+                eprintln!("{chars:>2} DIFF\n   core text {}\n   rune      {}", show(&ct), show(&rn));
+            } else {
+                eprintln!("{chars:>2} same {}", show(&ct));
+            }
+        }
+    }
+    unsafe { CFRelease(font) };
+    assert_eq!(differ, 0, "lines that break apart from Core Text's");
+}
