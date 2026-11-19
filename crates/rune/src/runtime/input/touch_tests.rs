@@ -102,6 +102,24 @@ fn a_slow_pan_over_selectable_text_scrolls_and_marks_nothing() {
     }
 }
 
+/// Text with nothing under it to scroll: a finger dragged across it marks nothing either.
+#[test]
+fn a_drag_over_selectable_text_with_nothing_to_scroll_marks_nothing() {
+    fn page(_: &(), _: &mut Cx<()>) -> El {
+        col().size(300.0, 300.0).child(crate::text("A short note of a few words to drag a finger over").key("note").w_full().wrap().selectable(true))
+    }
+    let mut rt = Runtime::new((), page, (300.0, 300.0), Env::default());
+    rt.frame(0.0);
+    rt.touch(1, TouchPhase::Started, 10.0, 8.0, 0.0);
+    for i in 1..=30 {
+        rt.touch(1, TouchPhase::Moved, 10.0 + 8.0 * i as f32, 8.0, 0.02 * f64::from(i));
+        rt.frame(0.02);
+    }
+    rt.touch(1, TouchPhase::Ended, 250.0, 8.0, 0.7);
+    rt.frame(1.0 / 60.0);
+    assert_eq!(rt.selected_text(), None);
+}
+
 #[test]
 fn a_finger_held_still_before_lifting_throws_nothing() {
     let mut rt = rig();

@@ -127,12 +127,13 @@ impl RuntimeCore {
         let (dx, dy) = (x - f.origin.0, y - f.origin.1);
         if let Mode::Pending { scroll } = f.mode && dx.hypot(dy) > TOUCH_SLOP {
             let origin = f.origin;
-            let (scroll, horizontal) = if self.press_drags() { (None, false) } else { self.touch_scroll_pan(origin.0, origin.1, dx.abs() > dy.abs(), scroll) };
+            let drags = self.press_drags();
+            let (scroll, horizontal) = if drags { (None, false) } else { self.touch_scroll_pan(origin.0, origin.1, dx.abs() > dy.abs(), scroll) };
             self.pointer.touch.finger.as_mut().unwrap().mode = match scroll {
                 Some(scroll) => Mode::Pan { scroll, horizontal },
                 None => Mode::Drag,
             };
-            if scroll.is_some() { self.drop_press_selection(); }
+            if !drags { self.drop_press_selection(); }
         }
         let f = self.pointer.touch.finger.as_mut().unwrap();
         let along = if f.mode.horizontal() { dx } else { dy };
