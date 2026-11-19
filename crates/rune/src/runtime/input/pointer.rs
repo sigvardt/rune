@@ -556,14 +556,16 @@ impl<S: 'static> Runtime<S> {
         !self.queue.is_empty()
     }
 
-    /// Scrolling viewport `id` under a held press inside it cancels the press, as a UIScrollView
-    /// cancels its content's touches: the row lets go and the release doesn't press. A drag
-    /// keeps its capture.
+    /// Scrolling viewport `id` under a held press cancels the press, as a UIScrollView cancels
+    /// its content's touches: the row lets go and the release doesn't press. A pan of the
+    /// viewport cancels it too, including a press that landed on a row beneath the viewport's
+    /// plain words, outside it: a pan releases where it began, so the pointer is back on that
+    /// row. A drag keeps its capture.
     pub(super) fn scroll_cancels_press(&mut self, id: NodeId) {
         let Some(path) = self.press.path() else { return };
         let Some(i) = self.nodes.iter().position(|n| n.path == path) else { return };
         let inside = std::iter::successors(self.nodes[i].parent, |&p| self.nodes[p].parent).any(|p| self.nodes[p].id == id);
-        if inside && self.nodes[i].handlers.on_drag.is_none() {
+        if (inside || self.touch.panning(id)) && self.nodes[i].handlers.on_drag.is_none() {
             if let Some(held) = self.press.held_mut() {
                 held.hit = capture::Hit::Cancelled;
                 held.second = false;

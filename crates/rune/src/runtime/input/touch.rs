@@ -68,6 +68,14 @@ enum Mode {
     Menu,
 }
 
+impl Touch {
+    /// The finger is panning viewport `id`: a press that landed outside it (plain words over a
+    /// row beneath) is cancelled with the pan, the same as a press inside it.
+    pub(super) fn panning(&self, id: NodeId) -> bool {
+        self.finger.as_ref().is_some_and(|f| matches!(f.mode, Mode::Pan { scroll, .. } if scroll == id))
+    }
+}
+
 impl Mode {
     /// The viewport the touch holds: the one it pans, or while pending the one under it.
     fn scroll(self) -> Option<NodeId> {
@@ -155,7 +163,8 @@ impl<S: 'static> Runtime<S> {
             self.cancel_pointer();
             return;
         }
-        // A pan cancelled the press, so its release clicks nothing.
+        // A pan cancelled the press. Its release is where it began, which is back on the row
+        // beneath a panel of plain words, so the cancel has to outlast the pointer returning.
         let (x, y) = if pan { f.origin } else { (x, y) };
         if f.mode == Mode::Drag { self.pointer_move(x, y); }
         self.pointer_up(x, y);
