@@ -239,9 +239,16 @@ impl<S: 'static> Runtime<S> {
                     let v = f64::from(velocity.clamp(-8000.0, 8000.0));
                     if horizontal { st.x.v = st.x.toward(v) as f32 }
                     else if pitch > 0.0 && (0.0..=st.max).contains(&st.offset) {
-                        // The coast travels its speed over the decay rate: aim it at the row it
-                        // would have come nearest, as UIKit's `targetContentOffset` does.
-                        let to = snap_row(st.offset - v / f64::from(SCROLL_DECAY), pitch, st.max);
+                        // `velocity` is along the finger. A free coast stores it negated
+                        // (`to_momentum(-v)`), and that coast adds its speed, so it travels
+                        // `(-v) / SCROLL_DECAY` from here. A slow one-row drag still has most of
+                        // that left when the finger lifts, and projecting all of it lands a row
+                        // past the one under the finger. Project only while the finger is on the
+                        // same row it lifted from; past that, the row it is on.
+                        let pitch_n = f64::from(pitch);
+                        let travel = (-v) / f64::from(SCROLL_DECAY);
+                        let here = snap_row(st.offset, pitch, st.max);
+                        let to = if travel.abs() < pitch_n { snap_row(st.offset + travel, pitch, st.max) } else { here };
                         st.mode = st.mode.to_momentum(((to - st.offset) * f64::from(SCROLL_DECAY)) as f32);
                     } else { st.mode = st.mode.to_momentum(-v as f32) }
                 }

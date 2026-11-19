@@ -137,6 +137,41 @@ fn a_tap_on_a_row_turns_the_wheel_to_it() {
     assert_eq!(offset(&rt), (start + 2) as f32 * PITCH);
 }
 
+/// A year wheel does not loop, so a miss cannot come back round as a month's can. A slow drag
+/// of one row, still moving when the finger lifts, rests on the year the finger left it on.
+#[test]
+fn a_slow_one_row_drag_on_a_year_wheel_rests_on_the_row_under_the_finger() {
+    let years: Vec<String> = (1900..2101).map(|y| y.to_string()).collect();
+    let drag = |rows: i32| {
+        let mut rt = Runtime::new(
+            St { wheel: Wheel::new("year", years.clone(), 100, false), picks: Vec::new() },
+            view,
+            (300.0, 400.0),
+            Env::default(),
+        );
+        rt.update(|s, tx| s.wheel.open(tx));
+        rt.frame(0.0);
+        rt.frame(1.0 / 60.0);
+        let start = rt.state.wheel.row;
+        // The finger moves up for a later year. 0.4s, and the last move is the lift, so it flings.
+        let dy = -rows as f32 * PITCH;
+        let steps = 24;
+        rt.touch(1, TouchPhase::Started, 150.0, 208.0, 1.0);
+        for i in 1..=steps {
+            rt.touch(1, TouchPhase::Moved, 150.0, 208.0 + dy * i as f32 / steps as f32, 1.0 + i as f64 / 60.0);
+            rt.frame(1.0 / 60.0);
+        }
+        rt.touch(1, TouchPhase::Ended, 150.0, 208.0 + dy, 1.0 + steps as f64 / 60.0);
+        for _ in 0..600 { rt.frame(1.0 / 60.0); }
+        assert_eq!(rt.scroll_y_of("year") % PITCH, 0.0, "on a row");
+        assert_eq!(rt.state.wheel.row, start + i64::from(rows), "rows {rows}: the year under the finger");
+        assert_eq!(rt.state.wheel.at(), (100 + rows) as usize);
+        assert_eq!(rt.state.picks, vec![(100 + rows) as usize]);
+    };
+    drag(1);
+    drag(-1);
+}
+
 #[test]
 fn a_wheel_that_does_not_loop_stops_at_its_ends() {
     let mut rt = open(false, 1);
