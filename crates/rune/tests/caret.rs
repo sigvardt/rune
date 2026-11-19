@@ -106,3 +106,38 @@ fn caret_rect_tracks_grapheme_steps() {
     assert_eq!(rt.state.draft.text, ["a", "🇯🇵", "👋🏽", "❤️", "b"].concat());
     assert!((c[0] - xs[1]).abs() < 0.01, "back after \"a\": {} vs {}", c[0], xs[1]);
 }
+
+/// The painted caret: the default bar, or `El::caret_size`'s rounded one of its own size on the same centre.
+fn painted_caret(size: Option<(f32, f32)>) -> rune::render::Instance {
+    struct F { draft: TextEdit, size: Option<(f32, f32)> }
+    fn v(s: &F, _: &mut Cx<F>) -> El {
+        let mut field = text_input(&s.draft, TextStyle::new(15.0, 400.0))
+            .key("input")
+            .w(200.0)
+            .on_edit(|s: &mut F| &mut s.draft)
+            .caret(rune::color::hex("#ff0000").unwrap(), rune::color::hex("#ff0000").unwrap().alpha(0.25));
+        if let Some((w, h)) = s.size {
+            field = field.caret_size(w, h);
+        }
+        col().w_full().h_full().padding(10.0).child(field)
+    }
+    let mut draft = TextEdit::new("hi");
+    draft.focused = true;
+    let mut rt = Runtime::new(F { draft, size }, v, (300.0, 200.0), Env::new(true, 3.0));
+    rt.frame(0.0);
+    rt.frame(1.0 / 60.0);
+    rt.instances.iter().copied().filter(|i| i.fill[0] > 0.99 && i.fill[1] < 0.01 && i.fill[3] > 0.99).last().expect("the caret is painted")
+}
+
+#[test]
+fn a_sized_caret_is_rounded_and_centred_where_the_default_bar_is() {
+    let plain = painted_caret(None);
+    let sized = painted_caret(Some((2.0, 20.0)));
+    // at 3x: 2 by 20 points are 6 by 60 pixels
+    assert!((sized.rect[2] - 6.0).abs() < 0.01 && (sized.rect[3] - 60.0).abs() < 0.01, "{:?}", sized.rect);
+    assert!((sized.radii[0] - 3.0).abs() < 0.01, "rounded at its ends: {:?}", sized.radii);
+    assert_eq!(plain.radii[0], 0.0, "the default bar stays square");
+    let centre = |i: &rune::render::Instance| i.rect[1] + i.rect[3] / 2.0;
+    assert!((centre(&plain) - centre(&sized)).abs() < 0.01, "same centre: {:?} {:?}", plain.rect, sized.rect);
+    assert_eq!(plain.rect[0], sized.rect[0], "same place along the line");
+}

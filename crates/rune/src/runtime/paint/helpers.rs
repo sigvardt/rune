@@ -205,11 +205,12 @@ pub(super) fn input_caret(n: &Node, r: [f32; 4], scale: f32, s: f32, gliding: bo
     let bb = layout.caret(caret_index(e, &spec.content), e.affinity, 1.5 * s);
     let (cx, cy) = (x + bb.x0 as f32 * scale, r[1] + ins[1] + bb.y0 as f32 * scale);
     let h = (if bb.y1 > bb.y0 { (bb.y1 - bb.y0) as f32 } else { spec.style.line_px() * s }) * scale;
+    let wide = input.caret_size.map_or(1.5, |c| c.0);
     let (caret_x, caret_w) = if (scale - 1.0).abs() <= 1e-5 {
         let gx = if gliding { pixel_snap::text_glide(r[0]) } else { 0.0 };
-        ((cx - gx).round() + gx, (1.5 * s).round().max(1.0))
+        ((cx - gx).round() + gx, (wide * s).round().max(1.0))
     } else {
-        (cx, (1.5 * s * scale).max(1.0))
+        (cx, (wide * s * scale).max(1.0))
     };
     // The candidate window opens under the clause being converted, its left edge at the
     // clause's start, as it does in a native field; else at the caret.
@@ -223,7 +224,15 @@ pub(super) fn input_caret(n: &Node, r: [f32; 4], scale: f32, s: f32, gliding: bo
         }
         (None, _) => [cx / s, cy / s, 2.0 * scale, h / s],
     };
-    Some(([caret_x, cy + h * 0.1, caret_w, h * 0.8], area))
+    let bar = match input.caret_size {
+        // its own height, centred on the line the default bar is centred on
+        Some((_, tall)) => {
+            let t = tall * s * scale;
+            [caret_x, cy + (h - t) / 2.0, caret_w, t]
+        }
+        None => [caret_x, cy + h * 0.1, caret_w, h * 0.8],
+    };
+    Some((bar, area))
 }
 
 /// Whether `looping`'s sampled value multiplies the element's opacity.

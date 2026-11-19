@@ -468,6 +468,15 @@ impl El {
         }
         self
     }
+    /// The caret's own size, `width` by `height` points, a bar rounded at its ends and centred on its
+    /// line, as UIKit draws a text view's (2 by about 20 at 15 points); without it the caret is 1.5
+    /// wide and 0.8 of the line tall.
+    pub fn caret_size(mut self, width: f32, height: f32) -> Self {
+        if let Some(i) = self.cold.get_mut_if_some().and_then(|c| c.input.as_deref_mut()) {
+            i.caret_size = Some((width.max(0.5), height.max(1.0)));
+        }
+        self
+    }
     /// Lets people select this read-only text and copy it, as SwiftUI's
     /// `.textSelection(.enabled)`: drag across it, double-click a word, triple-click a paragraph,
     /// shift-click to extend; Cmd+C (Ctrl+C elsewhere) copies and Cmd+A selects all of it while it
