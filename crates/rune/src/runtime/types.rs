@@ -69,7 +69,7 @@ impl crate::cold::Empty for NodeCold {
         above: None,
         scroll: None,
         scroll_axes: crate::el::ScrollAxes::Y,
-        scroll_edges: crate::el::ScrollEdges { fade: 0.0, fade_style: crate::el::FadeStyle::SMOOTH, margin: 0.0, anchor: false },
+        scroll_edges: crate::el::ScrollEdges { fade: 0.0, fade_style: crate::el::FadeStyle::SMOOTH, margin: 0.0, anchor: false, snap: 0.0 },
         sticky: None,
         growth: None,
         glide: None,
@@ -396,6 +396,8 @@ pub(super) struct ScrollState {
     pub(super) max: f64,
     /// At-bottom state last sent to `El::on_at_bottom`.
     pub(super) at_bottom: Option<bool>,
+    /// A finger moved it since it last came to rest, so its rest goes to `El::on_scroll_rest`.
+    pub(super) touch_moved: bool,
     /// State last sent to `El::on_far_from_bottom`.
     pub(super) far_from_bottom: Option<bool>,
     /// Whether the last frame drew the content's bottom on the viewport's (see `stuck_offset`).

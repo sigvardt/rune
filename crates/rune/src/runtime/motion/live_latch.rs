@@ -311,6 +311,11 @@ impl<S: 'static> Runtime<S> {
                         |b| { let [x, y] = <[f32; 2]>::decode(b); rune_motion::Vec2::new(x, y) }, op,
                         |_, _| false,
                     ),
+                    Property::Squash => apply(
+                        &mut self.scene, node.id, P_SQUASH, enter, leave,
+                        |b| f32::decode(b).max(0.0), op,
+                        |_, _| false,
+                    ),
                     Property::Trim => apply(
                         &mut self.scene, node.id, P_TRIM, enter, leave,
                         |b| { let [s, e] = <[f32; 2]>::decode(b); rune_motion::Vec2::new(s, e) }, op,

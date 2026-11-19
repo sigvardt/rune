@@ -72,7 +72,7 @@ pub use rune_motion::Cycle;
 pub(crate) use scroll::FadeStyle;
 pub use scroll::ScrollFade;
 pub use scroll::ScrollSpec;
-pub(crate) use scroll::{AtBottomFn, ScrollAxes, ScrollEdges, VisibleRowsFn};
+pub(crate) use scroll::{AtBottomFn, ScrollAxes, ScrollEdges, ScrollRestFn, VisibleRowsFn};
 pub use selection_style::SelectionStyle;
 pub(crate) use sticky::{Sticky, StickyEdge};
 pub(crate) use text_spec::{Elide, TextDir, TextDirEvent, step_text_dir};
@@ -352,6 +352,14 @@ impl El {
     /// at the scale rounded to 1/32, so a dragged value doesn't fill the glyph atlas.
     pub fn live_scale(mut self, value: impl Into<crate::live::Binding<f32>>) -> Self {
         self.bind_live(crate::live::Bound::new(value, crate::live::Property::Scale)); self
+    }
+    /// Bind a text's height factor about its middle, its width kept: the text's own glyphs
+    /// draw `value` times as tall and no narrower, as a row on a picker's wheel turned away
+    /// from the eye (`rune::wheel`). Layout, hit testing and the element's fill keep their
+    /// size, and the glyphs keep the masks they were rasterized with, sampled filtered. A glyph
+    /// drawn from its outline (text in a scale's motion) stays upright. 1 (the default) is none.
+    pub fn live_squash(mut self, value: impl Into<crate::live::Binding<f32>>) -> Self {
+        self.bind_live(crate::live::Bound::new(value, crate::live::Property::Squash)); self
     }
     /// Bind the [start, end] span of a shape's strokes that draws, as fractions (0 to 1) of
     /// their combined length, as [`Shape::trimmed`](crate::Shape::trimmed) cuts them. A

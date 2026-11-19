@@ -144,6 +144,16 @@ pub(super) fn step(state: &mut Option<TouchScroll>, event: TouchEvent) -> Effect
     }
 }
 
+/// Below this speed (points a second) a snapping coast eases onto its row: an aimed coast has
+/// half a point left (its decay stops at 1), and a finger lifted still between rows all of it.
+const SNAP_EASE: f32 = 1.0;
+
+/// The row of `pitch` nearest `offset`, within the viewport's `max`.
+fn snap_row(offset: f64, pitch: f32, max: f64) -> f64 {
+    let pitch = f64::from(pitch);
+    ((offset / pitch).round() * pitch).clamp(0.0, (max / pitch).floor() * pitch)
+}
+
 /// A critically damped edge return, integrated exactly for variable frame times.
 fn rebound(offset: f64, velocity: f32, target: f64, dt: f32) -> (f64, f32) {
     let dt = f64::from(dt);
@@ -200,6 +210,11 @@ impl<S: 'static> Runtime<S> {
         self.apply_touch(effects)
     }
 
+    /// The rows viewport `id` rests on (`El::scroll_snap`), 0 for none.
+    fn snap_pitch(&self, id: NodeId) -> f32 {
+        self.node_index.get(&id).map_or(0.0, |&i| self.nodes[i].scroll_edges.snap)
+    }
+
     /// Step the pan and carry out what the transition asked for.
     fn step_touch(&mut self, event: TouchEvent) {
         let effects = step(&mut self.touch.scroll, event);
@@ -219,9 +234,16 @@ impl<S: 'static> Runtime<S> {
                     if let Some(st) = self.scrolls.get_mut(&id) { st.x.v = 0.0; }
                 }
                 TouchEffect::Fling { id, horizontal, velocity } => {
+                    let pitch = if horizontal { 0.0 } else { self.snap_pitch(id) };
                     let Some(st) = self.scrolls.get_mut(&id) else { continue };
                     let v = f64::from(velocity.clamp(-8000.0, 8000.0));
-                    if horizontal { st.x.v = st.x.toward(v) as f32 } else { st.mode = st.mode.to_momentum(-v as f32) }
+                    if horizontal { st.x.v = st.x.toward(v) as f32 }
+                    else if pitch > 0.0 && (0.0..=st.max).contains(&st.offset) {
+                        // The coast travels its speed over the decay rate: aim it at the row it
+                        // would have come nearest, as UIKit's `targetContentOffset` does.
+                        let to = snap_row(st.offset - v / f64::from(SCROLL_DECAY), pitch, st.max);
+                        st.mode = st.mode.to_momentum(((to - st.offset) * f64::from(SCROLL_DECAY)) as f32);
+                    } else { st.mode = st.mode.to_momentum(-v as f32) }
                 }
                 TouchEffect::Pan { id, origin, horizontal, d } => {
                     let Some(st) = self.scrolls.get_mut(&id) else { continue };
@@ -232,6 +254,7 @@ impl<S: 'static> Runtime<S> {
                     let over = to - edge;
                     *offset = edge + over * 0.55 / (1.0 + over.abs() * 0.55 / 300.0);
                     if !horizontal { st.mode = st.mode.to_rest(); }
+                    st.touch_moved = true;
                     st.moved();
                     self.scroll_cancels_press(id);
                 }
@@ -242,6 +265,7 @@ impl<S: 'static> Runtime<S> {
                     active = Some(false);
                 }
                 TouchEffect::Coast { id, horizontal, overflow, dt } => {
+                    let pitch = if horizontal { 0.0 } else { self.snap_pitch(id) };
                     let moving = {
                         let Some(st) = self.scrolls.get_mut(&id) else { continue };
                         if horizontal { st.x.max = overflow.max(0.0); } else { st.max = overflow.max(0.0); }
@@ -249,18 +273,32 @@ impl<S: 'static> Runtime<S> {
                         let _ = mode::step(&mut st.mode, ModeEvent::Coast { moving: v.abs() > 1.0 });
                         let (offset, max) = st.axis(horizontal);
                         let edge = offset.clamp(0.0, max);
-                        if *offset != edge {
-                            (*offset, v) = rebound(*offset, v, edge, dt);
-                            if (*offset - edge).abs() < 0.1 && v.abs() < 1.0 { *offset = edge; v = 0.0; }
+                        // A snapping coast that has all but stopped eases onto its row, as does
+                        // a finger lifted still between two rows.
+                        let row = (pitch > 0.0).then(|| snap_row(edge, pitch, max)).filter(|&row| (*offset - row).abs() > 1e-3 && v.abs() < SNAP_EASE);
+                        if *offset != edge || row.is_some() {
+                            let to = row.unwrap_or(edge);
+                            (*offset, v) = rebound(*offset, v, to, dt);
+                            if (*offset - to).abs() < 0.1 && v.abs() < 1.0 { *offset = to; v = 0.0; }
                         } else {
                             let decay = (-SCROLL_DECAY * dt).exp();
                             *offset += f64::from(v * (1.0 - decay) / SCROLL_DECAY);
                             v *= decay;
                         }
-                        let moving = v.abs() > 1.0 || *offset < 0.0 || *offset > max;
+                        let off_row = pitch > 0.0 && (*offset - snap_row(offset.clamp(0.0, max), pitch, max)).abs() > 1e-3;
+                        let moving = v.abs() > 1.0 || *offset < 0.0 || *offset > max || off_row;
                         if horizontal { st.x.v = v; } else if v != 0.0 { st.mode = st.mode.to_momentum(v); } else { st.halt(); }
-                        moving
+                        // Where a pan came to rest, once (`El::on_scroll_rest`).
+                        let rest = (!moving && std::mem::take(&mut st.touch_moved)).then_some(if horizontal { st.x.offset } else { st.offset });
+                        (moving, rest)
                     };
+                    let (moving, rest) = moving;
+                    if let Some(at) = rest
+                        && let Some(&i) = self.node_index.get(&id)
+                        && self.nodes[i].handlers.get().is_some_and(|h| h.on_scroll_rest.is_some())
+                    {
+                        self.queue.push(Action::ScrollRest(self.nodes[i].path.clone(), at as f32));
+                    }
                     self.step_touch(TouchEvent::Settled { moving });
                     active = Some(moving);
                 }
@@ -321,6 +359,68 @@ mod tests {
         rt.touch_scroll_start(150.0, 50.0);
         assert_eq!(rt.touch_scroll_pan(150.0, 50.0, false, vertical), (Some(page), false));
         assert_eq!(held(&rt).map(|h| (h.0, h.1, h.2)), Some((page, false, true)));
+    }
+
+    /// A wheel of 40-point rows: whatever speed the finger lifts at, at 60 or 120 frames a
+    /// second, it rests on a row, the one its coast would have come nearest.
+    #[test]
+    fn a_snapping_viewport_rests_on_the_row_its_coast_comes_nearest() {
+        fn view(_: &(), _: &mut Cx<()>) -> El {
+            crate::col().size(200.0, 200.0).child(crate::col().key("wheel").w_full().h(200.0).scroll(crate::ScrollSpec { stick_bottom: false }).scroll_snap(40.0)
+                .children((0..50).map(|i| crate::el().key(format!("r{i}")).w_full().h(40.0))))
+        }
+        for hz in [60.0, 120.0] {
+            for (drag, ms) in [(-13.0, 400.0), (-37.0, 300.0), (-90.0, 120.0), (-150.0, 90.0), (60.0, 100.0), (-25.0, 2000.0)] {
+                let mut rt = Runtime::new((), view, (200.0, 200.0), Env::default());
+                rt.frame(0.0);
+                let id = rt.nodes.iter().find(|n| n.key.as_deref() == Some("wheel")).unwrap().id;
+                rt.update(|_, tx| tx.scroll_to_instant("wheel", 0.0, 400.0));
+                rt.frame(1.0 / hz);
+                let steps = (ms / 1000.0 * hz) as usize;
+                rt.touch(1, crate::TouchPhase::Started, 100.0, 100.0, 0.0);
+                for i in 1..=steps {
+                    // the last one moves its 25 points in a tenth of a second, then holds still
+                    let part = if ms >= 2000.0 { (i as f32 / (0.1 * hz as f32)).min(1.0) } else { i as f32 / steps as f32 };
+                    rt.touch(1, crate::TouchPhase::Moved, 100.0, 100.0 + drag * part, i as f64 / hz);
+                    rt.frame(1.0 / hz);
+                }
+                let lifted = rt.scrolls[&id].offset;
+                rt.touch(1, crate::TouchPhase::Ended, 100.0, 100.0 + drag, steps as f64 / hz);
+                for _ in 0..(8.0 * hz) as usize { rt.frame(1.0 / hz); }
+                let rest = rt.scrolls[&id].offset;
+                assert_eq!(rest % 40.0, 0.0, "{hz} Hz, {drag} in {ms} ms: rests on a row, at {rest} (lifted at {lifted})");
+                assert!(rt.touch.scroll.is_none(), "{hz} Hz, {drag} in {ms} ms: came to rest");
+                if ms >= 2000.0 { assert_eq!(rest, 440.0, "lifted still 25 points on (at {lifted}), it eases to the nearer row"); }
+            }
+        }
+    }
+
+    /// The wheel reports the row it came to rest on once, after the coast, and a tap that
+    /// moves nothing reports nothing.
+    #[test]
+    fn a_pan_reports_where_it_rests_once_and_a_tap_nothing() {
+        fn view(_: &Vec<f32>, _: &mut Cx<Vec<f32>>) -> El {
+            crate::col().size(200.0, 200.0).child(crate::col().key("wheel").w_full().h(200.0).scroll(crate::ScrollSpec { stick_bottom: false })
+                .scroll_snap(40.0).on_scroll_rest(|s: &mut Vec<f32>, at| s.push(at))
+                .children((0..50).map(|i| crate::el().key(format!("r{i}")).w_full().h(40.0))))
+        }
+        let mut rt = Runtime::new(Vec::new(), view, (200.0, 200.0), Env::default());
+        rt.frame(0.0);
+        rt.touch(1, crate::TouchPhase::Started, 100.0, 150.0, 0.0);
+        for i in 1..=12 {
+            rt.touch(1, crate::TouchPhase::Moved, 100.0, 150.0 - 10.0 * i as f32, f64::from(i) / 60.0);
+            rt.frame(1.0 / 60.0);
+            assert!(rt.state.is_empty(), "nothing while the finger pans");
+        }
+        rt.touch(1, crate::TouchPhase::Ended, 100.0, 30.0, 0.2);
+        for _ in 0..600 { rt.frame(1.0 / 60.0); }
+        let id = rt.nodes.iter().find(|n| n.key.as_deref() == Some("wheel")).unwrap().id;
+        assert_eq!(rt.state, vec![rt.scrolls[&id].offset as f32], "once, where it rests");
+        rt.touch(1, crate::TouchPhase::Started, 100.0, 100.0, 11.0);
+        rt.frame(1.0 / 60.0);
+        rt.touch(1, crate::TouchPhase::Ended, 100.0, 100.0, 11.05);
+        for _ in 0..60 { rt.frame(1.0 / 60.0); }
+        assert_eq!(rt.state.len(), 1, "a tap reports nothing");
     }
 
     #[test]

@@ -224,7 +224,7 @@ pub(crate) enum LatchOp {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Property { Opacity, Offset, Scale, Fill, Rect, Blur, Trim, TextColor, Border, Shadow, GradientTop, GradientBottom }
+pub(crate) enum Property { Opacity, Offset, Scale, Squash, Fill, Rect, Blur, Trim, TextColor, Border, Shadow, GradientTop, GradientBottom }
 impl Property {
     /// A colour: it moves paint only, never geometry.
     pub(crate) fn is_color(self) -> bool {

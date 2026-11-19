@@ -573,6 +573,11 @@ impl<S: 'static> Runtime<S> {
                 // A still text whose quads this frame would draw as the last one did copies them,
                 // as `El::grid` rows do: `quads` is the entry to record them under otherwise.
                 let mut copied = false;
+                // `El::live_squash`: the glyphs as tall as it says, about the text's middle.
+                let squash = if n.live.iter().any(|b| b.property == crate::live::Property::Squash) {
+                    self.scene.get(node_id, P_SQUASH).unwrap_or(1.0)
+                } else { 1.0 };
+                let squash_y = (r_exact[1] + r_exact[3]) * 0.5;
                 let mut quads: Option<((NodeId, crate::text::LayoutId), u64, usize, usize)> = None;
                 let mut pages: Option<Vec<(u16, u32)>> = None;
                 let zoom = if let (Some(r), Some((_, at))) = (&n.run_layout, &spec.cold.advance_in)
@@ -609,7 +614,7 @@ impl<S: 'static> Runtime<S> {
                     {
                         use std::hash::{Hash, Hasher};
                         let mut h = rune_motion::Fx::default();
-                        (origin.map(f32::to_bits), clip.map(f32::to_bits), fade.map(f32::to_bits), shown.map(f32::to_bits), [tk, raster, s].map(f32::to_bits)).hash(&mut h);
+                        (origin.map(f32::to_bits), clip.map(f32::to_bits), fade.map(f32::to_bits), shown.map(f32::to_bits), [tk, raster, s, squash].map(f32::to_bits)).hash(&mut h);
                         (premul(color, o, srgb).map(f32::to_bits), srgb, self.text.emit_key()).hash(&mut h);
                         for sp in spans_here.iter() {
                             sp.color.map(|c| premul(c, o, srgb).map(f32::to_bits)).hash(&mut h);
@@ -690,7 +695,7 @@ impl<S: 'static> Runtime<S> {
                         f = f.map(|v| v * a);
                     }
                     self.instances.extend(glyph_or_image(q, &self.text, &mut self.images, f, clip, fade)
-                        .map(|g| zoom_glyph(g, origin, r_origin, zoom)));
+                        .map(|g| squash_glyph(zoom_glyph(g, origin, r_origin, zoom), squash_y, squash)));
                     *glyph_count += 1;
                     // A colour or outline glyph draws per frame, from another atlas or a record.
                     if q.color != 0 || q.outline.is_some() {

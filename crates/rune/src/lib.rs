@@ -61,6 +61,7 @@ pub mod theme;
 pub mod time;
 pub mod tok;
 pub mod tracked;
+pub mod wheel;
 pub mod tooling;
 pub mod tray;
 
@@ -199,6 +200,7 @@ pub use latest::Latest;
 pub use live::Live;
 pub use live::LiveText;
 pub use live::Tween;
+pub use wheel::{Wheel, WheelLook};
 pub use memo::{memo, region, region_with};
 pub use tracked::{Reads, Tracked, tracked_reads};
 pub use native_menu::MenuError;

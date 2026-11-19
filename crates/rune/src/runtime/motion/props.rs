@@ -62,6 +62,8 @@ pub(super) const P_ICON_TURN: Prop<f32> = Prop::custom(88, PropClass::Rotation);
 pub(super) const P_SCALE: Prop<f32> = Prop::custom(89, PropClass::Scale);
 /// `El::group_opacity`'s presented rest level, so a new rest fades in rather than cutting.
 pub(super) const P_GROUP_REST: Prop<f32> = Prop::custom(94, PropClass::Opacity);
+/// `El::live_squash`'s presented height factor of a text's glyphs.
+pub(super) const P_SQUASH: Prop<f32> = Prop::custom(96, PropClass::Other);
 /// `El::live_trim`'s presented span of a shape's strokes, start and end as 0…1 fractions.
 pub(super) const P_TRIM: Prop<rune_motion::Vec2> = Prop::custom(95, PropClass::Other);
 /// The first four shadows' geometry: x, y, blur and spread in a rect's lanes.

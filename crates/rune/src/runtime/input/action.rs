@@ -16,6 +16,8 @@ pub(super) enum Action {
     /// `El::on_selection_change`.
     SelectionChange(String, crate::SelectionChange),
     AtBottom(String, bool),
+    /// `El::on_scroll_rest`: the viewport and where it came to rest.
+    ScrollRest(String, f32),
     FarFromBottom(String, bool),
     VisibleRows(String, std::ops::Range<usize>),
     Layout(String, [f32; 4]),
@@ -85,7 +87,7 @@ impl ActionQueue {
         // other hand, don't become input just because they have a queued callback.
         let at = crate::input::time::current();
         let input = !matches!(action, Action::Layout(..) | Action::ScreenLayout(..) | Action::DrawnLayout(..)
-            | Action::Visible(..) | Action::VisibleRows(..) | Action::AtBottom(..) | Action::FarFromBottom(..)
+            | Action::Visible(..) | Action::VisibleRows(..) | Action::AtBottom(..) | Action::FarFromBottom(..) | Action::ScrollRest(..)
             | Action::WindowFocus(_) | Action::Physical(crate::PhysicalInput::FocusLost, _) | Action::FinishIme
             | Action::ClipboardRead(..) | Action::SelectionChange(..)) || at.is_some();
         self.0.push(Queued { action, at, input });
@@ -177,6 +179,7 @@ fn handler_name(action: &Action) -> &'static str {
         Action::FocusControl(_) | Action::HoverFocus(_) | Action::Focus(..) | Action::Blur => "a focus change",
         Action::Dismiss(_) => "a modal's dismiss",
         Action::AtBottom(..) => "on_at_bottom",
+        Action::ScrollRest(..) => "on_scroll_rest",
         Action::FarFromBottom(..) => "on_far_from_bottom",
         Action::VisibleRows(..) => "on_visible_rows",
         Action::ScreenLayout(..) => "on_screen_layout",
@@ -192,7 +195,7 @@ fn handler_name(action: &Action) -> &'static str {
 #[cfg(debug_assertions)]
 fn stall_path(action: &Action) -> Option<&str> {
     match action {
-        Action::Dismiss(path) | Action::AtBottom(path, _) | Action::FarFromBottom(path, _) | Action::VisibleRows(path, _)
+        Action::Dismiss(path) | Action::AtBottom(path, _) | Action::ScrollRest(path, _) | Action::FarFromBottom(path, _) | Action::VisibleRows(path, _)
         | Action::Layout(path, _) | Action::ScreenLayout(path, _) | Action::Focus(path, ..) | Action::FocusControl(path) => Some(path),
         _ => action_path(action),
     }
@@ -372,6 +375,10 @@ impl<S: 'static> Runtime<S> {
             }
             Action::AtBottom(path, at) => {
                 let Some(f) = self.node(&path).and_then(|n| n.handlers.on_at_bottom.clone()) else { return false };
+                f(states!(self), at)
+            }
+            Action::ScrollRest(path, at) => {
+                let Some(f) = self.node(&path).and_then(|n| n.handlers.on_scroll_rest.clone()) else { return false };
                 f(states!(self), at)
             }
             Action::FarFromBottom(path, far) => {
