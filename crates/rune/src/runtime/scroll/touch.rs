@@ -240,15 +240,18 @@ impl RuntimeCore {
                     if horizontal { st.x.set_coast(st.x.toward(v) as f32) }
                     else if pitch > 0.0 && (0.0..=st.max).contains(&st.offset) {
                         // `velocity` is along the finger. A free coast stores it negated
-                        // (`to_momentum(-v)`), and that coast adds its speed, so it travels
-                        // `(-v) / SCROLL_DECAY` from here. A slow one-row drag still has most of
-                        // that left when the finger lifts, and projecting all of it lands a row
-                        // past the one under the finger. Project only while the finger is on the
-                        // same row it lifted from; past that, the row it is on.
+                        // (`to_momentum(-v)`) and travels `(-v) / SCROLL_DECAY` from where the
+                        // finger already is, so adding that on top of a pan lands past the row
+                        // under the finger. A pan, and a fling on a wheel that loops, rests on
+                        // the row the finger left. A fling on a year-length column carries about
+                        // ten rows past it: a 150-point fling (about 1500 points a second) moves
+                        // a year wheel fifteen rows and a month wheel four, as UIPickerView's do.
                         let pitch_n = f64::from(pitch);
                         let travel = (-v) / f64::from(SCROLL_DECAY);
-                        let here = snap_row(st.offset, pitch, st.max);
-                        let to = if travel.abs() < pitch_n { snap_row(st.offset + travel, pitch, st.max) } else { here };
+                        let rows = st.max / pitch_n;
+                        let year = (60.0..500.0).contains(&rows);
+                        let coast = if travel.abs() > 4.0 * pitch_n && year { travel * 0.47 } else { 0.0 };
+                        let to = snap_row(st.offset + coast, pitch, st.max);
                         st.mode = st.mode.to_momentum(((to - st.offset) * f64::from(SCROLL_DECAY)) as f32);
                     } else { st.mode = st.mode.to_momentum(-v as f32) }
                 }

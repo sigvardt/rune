@@ -117,10 +117,10 @@ impl Drum {
     }
 }
 
-/// How a [`Wheel`] looks: its rows' type and alignment, their ink, the band's row's ink, and
-/// the band's fill, which the wheel draws across its own width over the rows it covers. A
-/// picker of several wheels draws the band's rounded ends itself, behind them, in the same
-/// colour.
+/// How a [`Wheel`] looks: its rows' type and alignment, their ink, and the band's row's ink.
+/// `band` is the colour a picker paints behind its wheels, one rounded rect across all of
+/// them. The wheel draws the band's row and no fill of its own, so that colour is not laid
+/// down twice.
 #[derive(Clone, Copy, Debug)]
 pub struct WheelLook {
     pub font: TextStyle,
@@ -240,8 +240,11 @@ impl Wheel {
         };
         let mid = HEIGHT * 0.5;
         let grey = self.drum.grey.iter().map(|s| label(s, look.font, line, look.ink, mid - line * 0.5, look.inset));
+        // The band's row, keyed so a picker can place its rounded band on this rect. The wheel
+        // draws no fill of its own: the picker draws the one band, across every wheel, and a
+        // second fill here would lay the same colour over it.
         let band_top = mid - BAND * 0.5;
-        let band = el().absolute(0.0, band_top).size(width, BAND).fill(look.band).clip_soft(0.0)
+        let band = el().key(format!("{}/band", self.key)).absolute(0.0, band_top).size(width, BAND).clip_soft(0.0)
             .children(self.drum.bright.iter().map(|s| label(s, big, big_line, look.bright, BAND * 0.5 - big_line * 0.5, look.bright_inset)));
 
         // The viewport: row r in the middle at offset r * PITCH, and its rest a multiple of it.
