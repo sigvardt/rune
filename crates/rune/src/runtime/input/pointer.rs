@@ -492,11 +492,24 @@ impl<S: 'static> Runtime<S> {
     /// skips a scroller with nothing to scroll: a list of sections, each its own viewport as
     /// tall as its rows, scrolls from over any row.
     pub(super) fn scroll_at_axis(&self, x: f32, y: f32, horizontal: bool) -> Option<NodeId> {
+        self.scroll_at_where(x, y, horizontal, |_| true)
+    }
+
+    /// The viewport a finger at (x, y) pans: as [`Self::scroll_at_axis`], but only one that
+    /// holds the topmost element there, as UIKit hit-tests a touch before any scroll view sees
+    /// it. A finger on a panel's button over a list beneath pans neither, and presses nothing
+    /// when it slides off.
+    pub(super) fn touch_scroll_at_axis(&self, x: f32, y: f32, horizontal: bool) -> Option<NodeId> {
+        let top = self.top_target(x, y);
+        self.scroll_at_where(x, y, horizontal, |i| top.is_none_or(|t| std::iter::successors(Some(t), |&p| self.nodes[p].parent).any(|p| p == i)))
+    }
+
+    fn scroll_at_where(&self, x: f32, y: f32, horizontal: bool, holds: impl Fn(usize) -> bool) -> Option<NodeId> {
         self.nodes
             .iter()
             .enumerate()
             .rev()
-            .filter(|(i, n)| n.scroll.is_some() && n.scroll_axes.has(horizontal) && !self.subtree_exiting(*i) && self.allowed(*i))
+            .filter(|(i, n)| n.scroll.is_some() && n.scroll_axes.has(horizontal) && !self.subtree_exiting(*i) && self.allowed(*i) && holds(*i))
             .filter(|(_, n)| self.scrolls.get(&n.id).is_some_and(|st| if horizontal { st.x.max } else { st.max } > 0.0))
             .find(|(i, _)| self.node_contains(*i, x, y))
             .map(|(_, n)| n.id)

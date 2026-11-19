@@ -159,8 +159,8 @@ impl<S: 'static> Runtime<S> {
     /// settling from an earlier touch (momentum or its edge return) holds where the finger
     /// caught it instead.
     pub(super) fn touch_scroll_start(&mut self, x: f32, y: f32) -> Option<NodeId> {
-        let across = self.scroll_at_axis(x, y, true).and_then(|id| self.scrolls.get(&id).map(|st| (id, st.x.offset)));
-        let vertical = self.scroll_at(x, y);
+        let across = self.touch_scroll_at_axis(x, y, true).and_then(|id| self.scrolls.get(&id).map(|st| (id, st.x.offset)));
+        let vertical = self.touch_scroll_at_axis(x, y, false);
         let held = vertical.and_then(|id| self.scrolls.get(&id).map(|st| (id, st.offset)));
         self.step_touch(TouchEvent::Down { across, vertical: held });
         vertical
@@ -171,7 +171,7 @@ impl<S: 'static> Runtime<S> {
     /// with the vertical one. Returns the viewport and whether it moves horizontally.
     pub(super) fn touch_scroll_pan(&mut self, x: f32, y: f32, horizontal: bool, vertical: Option<NodeId>) -> (Option<NodeId>, bool) {
         let across = horizontal
-            .then(|| self.scroll_at_axis(x, y, true))
+            .then(|| self.touch_scroll_at_axis(x, y, true))
             .flatten()
             .and_then(|id| self.scrolls.get(&id).map(|st| (id, st.x.offset)));
         let held = vertical.and_then(|id| self.scrolls.get(&id).map(|st| (id, st.offset)));
