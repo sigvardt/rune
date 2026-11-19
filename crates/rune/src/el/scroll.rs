@@ -180,6 +180,24 @@ impl El {
         self.cold_mut().wheel_scrolls = Some(key.into().into_boxed_str());
         self
     }
+    /// On a vertical scroll viewport, rest only on multiples of `pitch` points, as a picker's
+    /// wheel rests on a row: a lifted finger's coast is sped up or slowed so it ends on the row
+    /// it would have come nearest (UIKit's `targetContentOffset`), and a finger lifted still
+    /// eases onto the nearest row. Make the content's overflow a multiple of `pitch` so both
+    /// ends are rows. Wheels and keys scroll as before. Anything not finite or not above 0 is
+    /// none.
+    pub fn scroll_snap(mut self, pitch: f32) -> Self {
+        self.cold_mut().scroll_edges.snap = if pitch.is_finite() && pitch > 0.0 { pitch } else { 0.0 };
+        self
+    }
+    /// On a scroll viewport, called with where it stands (its vertical offset in points) when a
+    /// finger's pan of it, and the coast after, come to rest: where a picker's wheel takes the
+    /// row it stopped on, as UIKit's `scrollViewDidEndDecelerating`, once and not per frame.
+    /// A finger lifted without moving it reports nothing.
+    pub fn on_scroll_rest<S: 'static>(mut self, f: impl Fn(&mut S, f32) + 'static) -> Self {
+        self.handlers.on_scroll_rest = Some(Rc::new(move |s, at| { f(downcast::<S>(s), at); true }));
+        self
+    }
 }
 
 /// How a scroll viewport's edges fade with the content hidden under them ([`El::scroll_fade`]).
@@ -354,6 +372,8 @@ pub(crate) struct ScrollEdges {
     pub(crate) margin: f32,
     /// The viewport keeps its top row where it is when content above it changes.
     pub(crate) anchor: bool,
+    /// A finger's coast ends on a multiple of this many points (`El::scroll_snap`); 0 for none.
+    pub(crate) snap: f32,
 }
 
 /// The axes a scroll viewport moves on: `El::scroll` (vertical), `El::scroll_x`, `El::scroll_xy`.
@@ -373,4 +393,5 @@ impl ScrollAxes {
 }
 
 pub(crate) type AtBottomFn = Rc<dyn Fn(crate::states::States<'_>, bool) -> bool>;
+pub(crate) type ScrollRestFn = Rc<dyn Fn(crate::states::States<'_>, f32) -> bool>;
 pub(crate) type VisibleRowsFn = Rc<dyn Fn(crate::states::States<'_>, std::ops::Range<usize>) -> bool>;

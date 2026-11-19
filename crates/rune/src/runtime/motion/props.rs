@@ -52,6 +52,7 @@ pub(in crate::runtime) fn prop_name(id: u16) -> &'static str {
         90..=93 => "shadow",
         94 => "group-rest",
         95 => "trim",
+        96 => "squash",
         _ => "custom",
     }
 }
@@ -62,6 +63,8 @@ pub(in crate::runtime) const P_ICON_TURN: Prop<f32> = Prop::custom(88, PropClass
 pub(in crate::runtime) const P_SCALE: Prop<f32> = Prop::custom(89, PropClass::Scale);
 /// `El::group_opacity`'s presented rest level, so a new rest fades in rather than cutting.
 pub(in crate::runtime) const P_GROUP_REST: Prop<f32> = Prop::custom(94, PropClass::Opacity);
+/// `El::live_squash`'s presented height factor of a text's glyphs.
+pub(in crate::runtime) const P_SQUASH: Prop<f32> = Prop::custom(96, PropClass::Other);
 /// `El::live_trim`'s presented span of a shape's strokes, start and end as 0…1 fractions.
 pub(in crate::runtime) const P_TRIM: Prop<rune_motion::Vec2> = Prop::custom(95, PropClass::Other);
 /// The first four shadows' geometry: x, y, blur and spread in a rect's lanes.

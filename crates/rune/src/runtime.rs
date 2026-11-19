@@ -229,6 +229,16 @@ mod pixel_snap_tests;
 #[cfg(test)]
 mod recorder_tests;
 #[cfg(test)]
+mod squash_tests;
+#[cfg(test)]
+impl<S: 'static> Runtime<S> {
+    /// The vertical offset of the scroll viewport keyed `key`, for tests outside the runtime.
+    pub(crate) fn scroll_y_of(&self, key: &str) -> f32 {
+        let id = self.tree.nodes.iter().find(|n| n.key.as_deref() == Some(key)).expect("a viewport keyed so").id;
+        self.scroll.scrolls[&id].offset as f32
+    }
+}
+#[cfg(test)]
 mod size_tests;
 #[cfg(test)]
 mod video_tests;

@@ -300,6 +300,19 @@ pub(in crate::runtime) fn zoom_glyph(mut g: Instance, origin: [f32; 2], r_origin
     g
 }
 
+/// A glyph instance drawn `k` times as tall about the line `cy` (`El::live_squash`), as wide as
+/// before. An alpha glyph keeps its atlas footprint in `uv.zw`, so the shader samples it
+/// filtered; an outline glyph, whose pen scales evenly, stays as it is.
+pub(in crate::runtime) fn squash_glyph(mut g: Instance, cy: f32, k: f32) -> Instance {
+    if k == 1.0 || (g.params[1] == KIND_GLYPH && g.radii[3] > 0.0) { return g; }
+    if g.params[1] == KIND_GLYPH && g.uv[2] == 0.0 {
+        (g.uv[2], g.uv[3]) = (g.rect[2] * if g.radii[0] > 0.5 { 3.0 } else { 1.0 }, g.rect[3]);
+    }
+    g.rect[1] = cy + (g.rect[1] - cy) * k;
+    g.rect[3] *= k;
+    g
+}
+
 /// A text glyph's instance: alpha-atlas coverage tinted by `fill`, or a colour glyph's image
 /// at `fill`'s alpha. None when the image atlas can't place it.
 pub(in crate::runtime) fn glyph_or_image(q: &GlyphQuad, text: &TextSystem, images: &mut crate::pixels::ImageAtlas, fill: [f32; 4], clip: [f32; 4], fade: [f32; 4]) -> Option<Instance> {

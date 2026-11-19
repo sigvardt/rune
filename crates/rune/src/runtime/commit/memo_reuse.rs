@@ -328,6 +328,7 @@ fn same_handlers(
         on_drag_end,
         drop,
         on_at_bottom,
+        on_scroll_rest,
         on_far_from_bottom,
         on_visible_rows,
         on_layout,
@@ -375,6 +376,7 @@ fn same_handlers(
         && opt_rc_eq(&a.on_drag_end, on_drag_end)
         && same_drop(&a.drop, drop)
         && opt_rc_eq(&a.on_at_bottom, on_at_bottom)
+        && opt_rc_eq(&a.on_scroll_rest, on_scroll_rest)
         && match (&a.on_far_from_bottom, on_far_from_bottom) {
             (None, None) => true,
             (Some((da, ua, fa)), Some((db, ub, fb))) => da == db && ua == ub && Rc::ptr_eq(fa, fb),

@@ -39,6 +39,7 @@ pub mod rewind;
 pub mod runtime;
 pub mod taskbar;
 pub mod text;
+pub mod wheel;
 pub mod tooling;
 pub mod tray;
 
@@ -187,6 +188,7 @@ pub use live::Tween;
 pub use memo::memo;
 pub use memo::region;
 pub use memo::region_with;
+pub use wheel::{Wheel, WheelLook};
 pub use native_menu::MenuError;
 pub use native_menu::MenuItem;
 pub use native_surface::NativeSurface;
