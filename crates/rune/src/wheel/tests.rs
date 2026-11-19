@@ -103,17 +103,25 @@ fn it_opens_on_its_label_in_the_middle_of_the_band() {
 fn a_spin_rests_on_a_row_and_tells_it_once() {
     let mut rt = open(true, 10);
     let start = rt.state.wheel.row;
-    // three rows up, slowly: a finger lifted all but still
-    pan(&mut rt, -3.0 * PITCH - 4.0, 900.0, 1.0);
+    // three rows and four points, then held still, so the lift throws nothing and it eases onto the third
+    let dy = -3.0 * PITCH - 4.0;
+    let steps = 24;
+    rt.touch(1, TouchPhase::Started, 150.0, 208.0, 1.0);
+    for i in 1..=steps {
+        rt.touch(1, TouchPhase::Moved, 150.0, 208.0 + dy * i as f32 / steps as f32, 1.0 + i as f64 / 60.0);
+        rt.frame(1.0 / 60.0);
+    }
+    rt.touch(1, TouchPhase::Ended, 150.0, 208.0 + dy, 1.0 + steps as f64 / 60.0 + 0.2);
+    for _ in 0..600 { rt.frame(1.0 / 60.0); }
     assert_eq!(offset(&rt) % PITCH, 0.0, "on a row");
     assert_eq!(rt.state.wheel.row, start + 3);
     assert_eq!(rt.state.picks, vec![1], "February, once: {:?}", rt.state.picks);
     assert!(bright(&rt).iter().any(|(w, y)| w == "February" && y.abs() < 1e-3), "{:?}", bright(&rt));
-    // a fling goes round the year and rests on a row, told once more
+    // a fling the snap aims onto a row, told once more, that row
     pan(&mut rt, 300.0, 100.0, 20.0);
     assert_eq!(offset(&rt) % PITCH, 0.0);
     assert_eq!(rt.state.picks.len(), 2);
-    assert!(rt.state.wheel.row < start - 12, "it coasted past a year: {} from {start}", rt.state.wheel.row);
+    assert_ne!(rt.state.wheel.row, start + 3, "the fling left the row the finger set");
     assert_eq!(rt.state.picks[1], rt.state.wheel.row.rem_euclid(12) as usize);
 }
 

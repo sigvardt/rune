@@ -378,14 +378,16 @@ impl PointerState {
         self.press_clicks.clear();
     }
 
-    /// Scrolling viewport `id` under a held press inside it cancels the press, as a UIScrollView
-    /// cancels its content's touches: the row lets go and the release doesn't press. A drag
-    /// keeps its capture.
+    /// Scrolling viewport `id` under a held press cancels the press, as a UIScrollView cancels
+    /// its content's touches: the row lets go and the release doesn't press. A pan of the
+    /// viewport cancels it too, including a press that landed on a row beneath the viewport's
+    /// plain words, outside it: a pan releases where it began, so the pointer is back on that
+    /// row. A drag keeps its capture.
     pub(in crate::runtime) fn scroll_cancels_press(&mut self, nodes: &[Node], id: NodeId) {
         let Some(path) = self.press.path() else { return };
         let Some(i) = nodes.iter().position(|n| n.path == path) else { return };
         let inside = std::iter::successors(nodes[i].parent, |&p| nodes[p].parent).any(|p| nodes[p].id == id);
-        if inside && nodes[i].handlers.on_drag.is_none() {
+        if (inside || self.touch.panning(id)) && nodes[i].handlers.on_drag.is_none() {
             if let Some(held) = self.press.held_mut() {
                 held.hit = Hit::Cancelled;
                 held.second = false;
