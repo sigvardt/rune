@@ -216,25 +216,27 @@ fn a_medium_pan_rests_on_the_row_under_the_finger() {
     assert_eq!(rt.state.picks, vec![103]);
 }
 
-/// A fling of 150 points: the finger moves four rows and lifts at 1500 points a second. The year
-/// wheel carries fifteen rows in all, as UIPickerView's does (2028 to 2043). The month wheel,
-/// which loops, rests on the fourth, which is what the same fling does there.
+/// A fling of 150 points thrown in a fifth of a second, as the Simulator's fling gesture throws
+/// it: the finger moves about five rows and lifts at 750 points a second. UIPickerView's year
+/// wheel carries sixteen rows either way (2026 to 2042 and back), and its month wheel, which
+/// loops, coasts as far.
 #[test]
-fn a_year_fling_carries_as_far_as_native() {
-    let flung = |looped: bool| {
+fn a_fling_carries_as_far_as_native() {
+    let flung = |looped: bool, up: bool| {
         let mut rt = if looped { open(true, 10) } else { year() };
         let start = rt.state.wheel.row;
-        drag(&mut rt, -4.0 * PITCH, f64::from(4.0 * PITCH) / 1500.0, true);
+        drag(&mut rt, if up { -150.0 } else { 150.0 }, 0.2, true);
+        assert_eq!(rt.scroll_y_of(if looped { "months" } else { "year" }) % PITCH, 0.0, "on a row");
         rt.state.wheel.row - start
     };
-    let years = flung(false);
-    assert!((14..=16).contains(&years), "a year fling carries about fifteen rows, not {years}");
-    let months = flung(true);
-    assert!((3..=5).contains(&months), "the same fling carries a month wheel about four rows, not {months}");
+    for looped in [false, true] {
+        assert_eq!(flung(looped, true), 16, "a fling up carries sixteen rows (looped {looped})");
+        assert_eq!(flung(looped, false), -16, "a fling down carries sixteen rows back (looped {looped})");
+    }
 }
 
-/// The band's row is the wheel's own middle, [`BAND`] tall, and the wheel draws no fill of its
-/// own there: the picker draws the one band.
+/// The band's row is the wheel's own middle, [`BAND`] tall, filled with the band's colour over
+/// the dim rows.
 #[test]
 fn the_bands_row_sits_in_the_middle_of_the_wheel() {
     let rt = open(true, 10);

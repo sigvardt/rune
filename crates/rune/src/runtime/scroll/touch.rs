@@ -241,16 +241,14 @@ impl<S: 'static> Runtime<S> {
                     else if pitch > 0.0 && (0.0..=st.max).contains(&st.offset) {
                         // `velocity` is along the finger. A free coast stores it negated
                         // (`to_momentum(-v)`) and travels `(-v) / SCROLL_DECAY` from where the
-                        // finger already is, so adding that on top of a pan lands past the row
-                        // under the finger. A pan, and a fling on a wheel that loops, rests on
-                        // the row the finger left. A fling on a year-length column carries about
-                        // ten rows past it: a 150-point fling (about 1500 points a second) moves
-                        // a year wheel fifteen rows and a month wheel four, as UIPickerView's do.
+                        // finger already is. A pan rests on the row the finger left. A fling
+                        // coasts on UIScrollView's own deceleration (0.998 a millisecond, which
+                        // is this decay) and settles on the row that coast reaches, on a wheel
+                        // that loops as on one that ends, as UIPickerView's do: 150 points
+                        // thrown in a fifth of a second carries sixteen rows either way.
                         let pitch_n = f64::from(pitch);
                         let travel = (-v) / f64::from(SCROLL_DECAY);
-                        let rows = st.max / pitch_n;
-                        let year = (60.0..500.0).contains(&rows);
-                        let coast = if travel.abs() > 4.0 * pitch_n && year { travel * 0.47 } else { 0.0 };
+                        let coast = if travel.abs() > 4.0 * pitch_n { travel } else { 0.0 };
                         let to = snap_row(st.offset + coast, pitch, st.max);
                         st.mode = st.mode.to_momentum(((to - st.offset) * f64::from(SCROLL_DECAY)) as f32);
                     } else { st.mode = st.mode.to_momentum(-v as f32) }
