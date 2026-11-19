@@ -75,6 +75,33 @@ fn a_lifted_finger_throws_with_the_speed_uikit_gives_the_same_drag() {
     }
 }
 
+/// A list of selectable paragraphs: a finger pans it and marks nothing, however slowly it
+/// moves, as UIKit's text and Chromium's on touch (a drag there scrolls; a selection comes
+/// from a long press).
+#[test]
+fn a_slow_pan_over_selectable_text_scrolls_and_marks_nothing() {
+    fn page(_: &(), _: &mut Cx<()>) -> El {
+        let words: Vec<String> = (0..300).map(|i| format!("word{i}")).collect();
+        col().size(300.0, 300.0).child(col().key("page").w_full().h(300.0).scroll(ScrollSpec { stick_bottom: false })
+            .child(crate::text(words.join(" ")).key("notes").w_full().wrap().selectable(true)))
+    }
+    for (steps, seconds) in [(10, 0.25), (60, 0.9), (150, 2.5)] {
+        let mut rt = Runtime::new((), page, (300.0, 300.0), Env::default());
+        rt.frame(0.0);
+        rt.touch(1, TouchPhase::Started, 60.0, 250.0, 0.0);
+        for i in 1..=steps {
+            let t = seconds * i as f64 / steps as f64;
+            rt.touch(1, TouchPhase::Moved, 60.0, 250.0 - 200.0 * i as f32 / steps as f32, t);
+            rt.frame(seconds / steps as f64);
+        }
+        rt.touch(1, TouchPhase::Ended, 60.0, 50.0, seconds + 0.2);
+        for _ in 0..10 { rt.frame(1.0 / 60.0); }
+        let id = rt.tree.nodes.iter().find(|n| n.key.as_deref() == Some("page")).unwrap().id;
+        assert!(rt.scroll.scrolls[&id].offset > 150.0, "{seconds} s: the page followed the finger: {}", rt.scroll.scrolls[&id].offset);
+        assert_eq!(rt.selected_text(), None, "{seconds} s: a pan marks nothing");
+    }
+}
+
 #[test]
 fn a_finger_held_still_before_lifting_throws_nothing() {
     let mut rt = rig();

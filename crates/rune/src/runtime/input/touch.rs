@@ -132,6 +132,7 @@ impl RuntimeCore {
                 Some(scroll) => Mode::Pan { scroll, horizontal },
                 None => Mode::Drag,
             };
+            if scroll.is_some() { self.drop_press_selection(); }
         }
         let f = self.pointer.touch.finger.as_mut().unwrap();
         let along = if f.mode.horizontal() { dx } else { dy };
