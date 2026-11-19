@@ -172,6 +172,77 @@ fn a_slow_one_row_drag_on_a_year_wheel_rests_on_the_row_under_the_finger() {
     drag(-1);
 }
 
+/// A year wheel, opened on 2000 (label 100 of 1900..=2100).
+fn year() -> Runtime<St> {
+    let years: Vec<String> = (1900..2101).map(|y| y.to_string()).collect();
+    let mut rt = Runtime::new(
+        St { wheel: Wheel::new("year", years, 100, false), picks: Vec::new() },
+        view,
+        (300.0, 400.0),
+        Env::default(),
+    );
+    rt.update(|s, tx| s.wheel.open(tx));
+    rt.frame(0.0);
+    rt.frame(1.0 / 60.0);
+    rt
+}
+
+/// A finger drag of `dy` points over `seconds`. `steady` keeps one speed, so the lift throws
+/// with it; otherwise the finger eases out and lifts slowly.
+fn drag(rt: &mut Runtime<St>, dy: f32, seconds: f64, steady: bool) {
+    let steps = (seconds * 60.0).round().max(2.0) as usize;
+    let at = |i: usize| {
+        let t = i as f64 / steps as f64;
+        if steady { t as f32 } else { (t * t * (3.0 - 2.0 * t)) as f32 }
+    };
+    rt.touch(1, TouchPhase::Started, 150.0, 208.0, 1.0);
+    for i in 1..=steps {
+        rt.touch(1, TouchPhase::Moved, 150.0, 208.0 + dy * at(i), 1.0 + i as f64 / 60.0);
+        rt.frame(1.0 / 60.0);
+    }
+    rt.touch(1, TouchPhase::Ended, 150.0, 208.0 + dy, 1.0 + steps as f64 / 60.0);
+    for _ in 0..600 { rt.frame(1.0 / 60.0); }
+}
+
+/// A pan of 96 points over 1.5 seconds is about three rows, and the finger lifts at about 64
+/// points a second. Native rests on the third row; projecting that lift's coast lands on the fourth.
+#[test]
+fn a_medium_pan_rests_on_the_row_under_the_finger() {
+    let mut rt = year();
+    let start = rt.state.wheel.row;
+    drag(&mut rt, -96.0, 1.5, false);
+    assert_eq!(rt.scroll_y_of("year") % PITCH, 0.0, "on a row");
+    assert_eq!(rt.state.wheel.row, start + 3, "96 points is three rows, and the coast adds none");
+    assert_eq!(rt.state.picks, vec![103]);
+}
+
+/// A fling of 150 points: the finger moves four rows and lifts at 1500 points a second. The year
+/// wheel carries fifteen rows in all, as UIPickerView's does (2028 to 2043). The month wheel,
+/// which loops, rests on the fourth, which is what the same fling does there.
+#[test]
+fn a_year_fling_carries_as_far_as_native() {
+    let flung = |looped: bool| {
+        let mut rt = if looped { open(true, 10) } else { year() };
+        let start = rt.state.wheel.row;
+        drag(&mut rt, -4.0 * PITCH, f64::from(4.0 * PITCH) / 1500.0, true);
+        rt.state.wheel.row - start
+    };
+    let years = flung(false);
+    assert!((14..=16).contains(&years), "a year fling carries about fifteen rows, not {years}");
+    let months = flung(true);
+    assert!((3..=5).contains(&months), "the same fling carries a month wheel about four rows, not {months}");
+}
+
+/// The band's row is the wheel's own middle, [`BAND`] tall, and the wheel draws no fill of its
+/// own there: the picker draws the one band.
+#[test]
+fn the_bands_row_sits_in_the_middle_of_the_wheel() {
+    let rt = open(true, 10);
+    let ([x, y, w, h], _) = rt.presented("months/band").expect("the band's row");
+    assert_eq!((x, w, h), (0.0, 300.0, BAND));
+    assert!((y - (100.0 + (HEIGHT - BAND) * 0.5)).abs() < 1e-3, "the band's top: {y}");
+}
+
 #[test]
 fn a_wheel_that_does_not_loop_stops_at_its_ends() {
     let mut rt = open(false, 1);
