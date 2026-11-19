@@ -495,13 +495,18 @@ impl<S: 'static> Runtime<S> {
         self.scroll_at_where(x, y, horizontal, |_| true)
     }
 
-    /// The viewport a finger at (x, y) pans: as [`Self::scroll_at_axis`], but only one that
-    /// holds the topmost element there, as UIKit hit-tests a touch before any scroll view sees
-    /// it. A finger on a panel's button over a list beneath pans neither, and presses nothing
-    /// when it slides off.
+    /// The viewport a finger at (x, y) pans: as [`Self::scroll_at_axis`], but not one under
+    /// the topmost element there that takes input, drawn over the viewport from outside it, as
+    /// UIKit hit-tests a touch before any scroll view sees it. A finger on a panel's button over
+    /// a list beneath pans neither, and presses nothing when it slides off; a finger on a
+    /// panel's plain words pans the panel, though a row of the list beneath is the topmost
+    /// element there that takes input.
     pub(super) fn touch_scroll_at_axis(&self, x: f32, y: f32, horizontal: bool) -> Option<NodeId> {
         let top = self.top_target(x, y);
-        self.scroll_at_where(x, y, horizontal, |i| top.is_none_or(|t| std::iter::successors(Some(t), |&p| self.nodes[p].parent).any(|p| p == i)))
+        // Nodes are in drawing order, each before its subtree: one after the viewport and outside
+        // it is drawn over it.
+        let over = |i: usize, t: usize| t > i && !std::iter::successors(Some(t), |&p| self.nodes[p].parent).any(|p| p == i);
+        self.scroll_at_where(x, y, horizontal, |i| top.is_none_or(|t| !over(i, t)))
     }
 
     fn scroll_at_where(&self, x: f32, y: f32, horizontal: bool, holds: impl Fn(usize) -> bool) -> Option<NodeId> {
