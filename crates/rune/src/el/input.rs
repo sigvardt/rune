@@ -20,6 +20,9 @@ pub struct InputSpec {
     /// [`El::caret`]; the others follow the window's foreground ([`Cx::foreground`](crate::Cx::foreground)).
     pub(crate) placeholder_inked: bool,
     pub(crate) caret_inked: bool,
+    /// [`El::caret_size`]: the caret's width and height in points, a bar rounded at its ends and
+    /// centred on its line, as UIKit draws it; else 1.5 wide and 0.8 of the line tall.
+    pub(crate) caret_size: Option<(f32, f32)>,
     pub(crate) revealed_override: Option<bool>,
     pub(crate) decorations: Vec<Span>,
     pub(crate) rich_style: crate::edit::RichStyle,
@@ -82,6 +85,7 @@ pub fn text_input(edit: &TextEdit, style: TextStyle) -> El {
         single_line: false,
         placeholder_inked: false,
         caret_inked: false,
+        caret_size: None,
         revealed_override: None,
         decorations: Vec::new(),
         rich_style: crate::edit::RichStyle::default(),

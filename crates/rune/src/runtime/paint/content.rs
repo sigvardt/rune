@@ -784,7 +784,9 @@ impl RuntimeCore {
                 }
             }
             if let (Some(c), Some(inp)) = (caret, &n.input) {
-                self.instances.push(rect_inst(c, premul(inp.caret, o, srgb), 0.0, clip, fade));
+                // a sized caret is rounded at its ends, as UIKit's
+                let round = if inp.caret_size.is_some() { c[2] / 2.0 } else { 0.0 };
+                self.instances.push(rect_inst(c, premul(inp.caret, o, srgb), round, clip, fade));
             }
             self.text.set_emit(crate::text::outline::Emit::Atlas);
         }
