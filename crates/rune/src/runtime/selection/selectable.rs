@@ -542,8 +542,8 @@ impl<S: 'static> Runtime<S> {
         self.select_step(phase::Event::Clear);
     }
 
-    /// A finger that pans the page drops the selection its press began: on touch a drag scrolls
-    /// and a long press selects, as in UIKit's text and Chromium's. Kept, the selection went on
+    /// A finger that pans the page, or drags over text with nothing to scroll, drops the
+    /// selection its press began: on touch a drag scrolls, as in UIKit's text and Chromium's. Kept, the selection went on
     /// following the content scrolling under the finger and marked a page of text.
     pub(super) fn drop_press_selection(&mut self) {
         if self.selectable.phase.dragging() { self.clear_text_selection(); }

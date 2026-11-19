@@ -118,12 +118,13 @@ impl<S: 'static> Runtime<S> {
         let (dx, dy) = (x - f.origin.0, y - f.origin.1);
         if let Mode::Pending { scroll } = f.mode && dx.hypot(dy) > TOUCH_SLOP {
             let origin = f.origin;
-            let (scroll, horizontal) = if self.press_drags() { (None, false) } else { self.touch_scroll_pan(origin.0, origin.1, dx.abs() > dy.abs(), scroll) };
+            let drags = self.press_drags();
+            let (scroll, horizontal) = if drags { (None, false) } else { self.touch_scroll_pan(origin.0, origin.1, dx.abs() > dy.abs(), scroll) };
             self.touch.finger.as_mut().unwrap().mode = match scroll {
                 Some(scroll) => Mode::Pan { scroll, horizontal },
                 None => Mode::Drag,
             };
-            if scroll.is_some() { self.drop_press_selection(); }
+            if !drags { self.drop_press_selection(); }
         }
         let f = self.touch.finger.as_mut().unwrap();
         let along = if f.mode.horizontal() { dx } else { dy };
@@ -325,6 +326,24 @@ mod tests {
             assert!(rt.scrolls[&id].offset > 150.0, "{seconds} s: the page followed the finger: {}", rt.scrolls[&id].offset);
             assert_eq!(rt.selected_text(), None, "{seconds} s: a pan marks nothing");
         }
+    }
+
+    /// Text with nothing under it to scroll: a finger dragged across it marks nothing either.
+    #[test]
+    fn a_drag_over_selectable_text_with_nothing_to_scroll_marks_nothing() {
+        fn page(_: &(), _: &mut Cx<()>) -> El {
+            col().size(300.0, 300.0).child(crate::text("A short note of a few words to drag a finger over").key("note").w_full().wrap().selectable(true))
+        }
+        let mut rt = Runtime::new((), page, (300.0, 300.0), Env::default());
+        rt.frame(0.0);
+        rt.touch(1, TouchPhase::Started, 10.0, 8.0, 0.0);
+        for i in 1..=30 {
+            rt.touch(1, TouchPhase::Moved, 10.0 + 8.0 * i as f32, 8.0, 0.02 * f64::from(i));
+            rt.frame(0.02);
+        }
+        rt.touch(1, TouchPhase::Ended, 250.0, 8.0, 0.7);
+        rt.frame(1.0 / 60.0);
+        assert_eq!(rt.selected_text(), None);
     }
 
     #[test]
