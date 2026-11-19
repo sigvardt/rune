@@ -564,6 +564,15 @@ impl RuntimeCore {
         self.scroll_in_chain(at, horizontal, |st| if horizontal { st.x.max } else { st.max } > 0.0)
     }
 
+    /// The viewport a finger at (x, y) pans: as [`Self::scroll_at_axis`], but only one that
+    /// holds the topmost element there, as UIKit hit-tests a touch before any scroll view sees
+    /// it. A finger on a panel's button over a list beneath pans neither, and presses nothing
+    /// when it slides off.
+    pub(in crate::runtime) fn touch_scroll_at_axis(&self, x: f32, y: f32, horizontal: bool) -> Option<NodeId> {
+        let Some(top) = self.top_target(x, y) else { return None };
+        self.scroll_in_chain(Some(top), horizontal, |st| if horizontal { st.x.max } else { st.max } > 0.0)
+    }
+
     /// The vertical viewport a delta `dy` at (x, y) starts a run on: from where a gesture there
     /// starts (`Self::chain_start`: the topmost hit, or a scroll view inside it) up its ancestors,
     /// the first that can still move that way, as Chromium chains a wheel's scroll. One at its end

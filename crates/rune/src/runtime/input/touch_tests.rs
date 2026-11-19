@@ -120,6 +120,57 @@ fn a_drag_over_selectable_text_with_nothing_to_scroll_marks_nothing() {
     assert_eq!(rt.selected_text(), None);
 }
 
+/// A finger that lands on a button and slides off it, slowly or quickly, presses nothing, as
+/// a UIButton lets go of a touch that leaves it.
+#[test]
+fn a_finger_that_slides_off_a_button_presses_nothing() {
+    fn page(_: &S, _: &mut Cx<S>) -> El {
+        col().size(300.0, 600.0).justify_end().child(el().key("more").size(80.0, 44.0).on_press(|s: &mut S| s.taps.push(1)))
+    }
+    // Held still first (a test driver's press-and-drag holds before it moves), or not.
+    for hold in [0.0, 0.7] {
+        for (steps, seconds) in [(10, 0.25), (36, 0.6), (150, 2.5)] {
+            let mut rt = Runtime::new(S::default(), page, (300.0, 600.0), Env::default());
+            rt.frame(0.0);
+            rt.touch(1, TouchPhase::Started, 40.0, 578.0, 0.0);
+            for _ in 0..(hold * 60.0) as usize { rt.frame(1.0 / 60.0); }
+            for i in 1..=steps {
+                rt.touch(1, TouchPhase::Moved, 40.0, 578.0 - 300.0 * i as f32 / steps as f32, hold + seconds * i as f64 / steps as f64);
+                rt.frame(seconds / steps as f64);
+            }
+            rt.touch(1, TouchPhase::Ended, 40.0, 278.0, hold + seconds + 0.02);
+            rt.frame(1.0 / 60.0);
+            assert!(rt.state.taps.is_empty(), "held {hold} s, {seconds} s: slid off, nothing pressed");
+        }
+    }
+}
+
+/// A panel over a list, its button laid over the list's rows: a finger that slides off the
+/// button pans neither the list beneath nor presses the button.
+#[test]
+fn a_finger_on_a_button_over_a_list_beneath_pans_nothing_and_presses_nothing() {
+    fn page(_: &S, _: &mut Cx<S>) -> El {
+        el().size(300.0, 600.0)
+            .child(col().key("list").size(300.0, 600.0).scroll(ScrollSpec { stick_bottom: false })
+                .children((0..40).map(|i| el().key(format!("row{i}")).w_full().h(40.0).on_press(move |s: &mut S| s.taps.push(i)))))
+            .child(el().key("more").absolute(10.0, 550.0).size(80.0, 44.0).fill(crate::Color::WHITE).on_press(|s: &mut S| s.taps.push(100)))
+    }
+    for seconds in [0.25, 0.6, 2.5] {
+        let mut rt = Runtime::new(S::default(), page, (300.0, 600.0), Env::default());
+        rt.frame(0.0);
+        rt.touch(1, TouchPhase::Started, 40.0, 572.0, 0.0);
+        for i in 1..=40 {
+            rt.touch(1, TouchPhase::Moved, 40.0, 572.0 - 7.5 * i as f32, seconds * f64::from(i) / 40.0);
+            rt.frame(seconds / 40.0);
+        }
+        rt.touch(1, TouchPhase::Ended, 40.0, 272.0, seconds + 0.02);
+        for _ in 0..30 { rt.frame(1.0 / 60.0); }
+        let id = rt.tree.nodes.iter().find(|n| n.key.as_deref() == Some("list")).unwrap().id;
+        assert_eq!(rt.scroll.scrolls[&id].offset, 0.0, "{seconds} s: the list beneath stayed");
+        assert!(rt.state.taps.is_empty(), "{seconds} s: nothing pressed: {:?}", rt.state.taps);
+    }
+}
+
 #[test]
 fn a_finger_held_still_before_lifting_throws_nothing() {
     let mut rt = rig();
