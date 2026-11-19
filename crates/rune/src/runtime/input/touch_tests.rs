@@ -172,6 +172,34 @@ fn a_finger_on_a_button_over_a_list_beneath_pans_nothing_and_presses_nothing() {
 }
 
 #[test]
+fn a_finger_on_a_panels_plain_words_over_a_list_beneath_pans_the_panel() {
+    // a drawer of plain words, scrolling, over a list whose rows take presses: the words take
+    // no input, so the topmost element under the finger that does is a row beneath
+    fn page(_: &S, _: &mut Cx<S>) -> El {
+        el().size(300.0, 600.0)
+            .child(col().key("list").size(300.0, 600.0).scroll(ScrollSpec { stick_bottom: false })
+                .children((0..40).map(|i| el().key(format!("row{i}")).w_full().h(40.0).on_press(move |s: &mut S| s.taps.push(i)))))
+            .child(col().key("drawer").absolute(0.0, 100.0).size(300.0, 500.0).fill(crate::Color::BLACK).scroll(ScrollSpec { stick_bottom: false })
+                .children((0..30).map(|i| crate::text(format!("line {i}")).key(format!("line{i}")).h(40.0))))
+    }
+    for seconds in [0.25, 2.5] {
+        let mut rt = Runtime::new(S::default(), page, (300.0, 600.0), Env::default());
+        rt.frame(0.0);
+        rt.touch(1, TouchPhase::Started, 150.0, 500.0, 0.0);
+        for i in 1..=30 {
+            rt.touch(1, TouchPhase::Moved, 150.0, 500.0 - 10.0 * i as f32, seconds * f64::from(i) / 30.0);
+            rt.frame(seconds / 30.0);
+        }
+        rt.touch(1, TouchPhase::Ended, 150.0, 200.0, seconds + 0.02);
+        for _ in 0..30 { rt.frame(1.0 / 60.0); }
+        let at = |rt: &Runtime<S>, k: &str| { let id = rt.tree.nodes.iter().find(|n| n.key.as_deref() == Some(k)).unwrap().id; rt.scroll.scrolls[&id].offset };
+        assert!(at(&rt, "drawer") > 100.0, "{seconds} s: the drawer moved: {}", at(&rt, "drawer"));
+        assert_eq!(at(&rt, "list"), 0.0, "{seconds} s: the list beneath stayed");
+        assert!(rt.state.taps.is_empty(), "{seconds} s: nothing pressed: {:?}", rt.state.taps);
+    }
+}
+
+#[test]
 fn a_finger_held_still_before_lifting_throws_nothing() {
     let mut rt = rig();
     rt.touch(1, TouchPhase::Started, 100.0, 200.0, 0.0);

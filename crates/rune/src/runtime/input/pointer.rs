@@ -564,13 +564,32 @@ impl RuntimeCore {
         self.scroll_in_chain(at, horizontal, |st| if horizontal { st.x.max } else { st.max } > 0.0)
     }
 
-    /// The viewport a finger at (x, y) pans: as [`Self::scroll_at_axis`], but only one that
-    /// holds the topmost element there, as UIKit hit-tests a touch before any scroll view sees
-    /// it. A finger on a panel's button over a list beneath pans neither, and presses nothing
-    /// when it slides off.
+    /// The viewport a finger at (x, y) pans: as [`Self::scroll_at_axis`], but not one under
+    /// the topmost element there that takes input, drawn over the viewport from outside it, as
+    /// UIKit hit-tests a touch before any scroll view sees it. A finger on a panel's button over
+    /// a list beneath pans neither, and presses nothing when it slides off; a finger on a
+    /// panel's plain words pans the panel, though a row of the list beneath is the topmost
+    /// element there that takes input.
     pub(in crate::runtime) fn touch_scroll_at_axis(&self, x: f32, y: f32, horizontal: bool) -> Option<NodeId> {
-        let Some(top) = self.top_target(x, y) else { return None };
-        self.scroll_in_chain(Some(top), horizontal, |st| if horizontal { st.x.max } else { st.max } > 0.0)
+        // The chain starts where a wheel's would, so a raised or anchored panel over a list is
+        // the start and the list beneath is never reached. From there it walks up, and passes a
+        // viewport only when that start is drawn after it and outside it.
+        let Some(top) = self.chain_start(x, y) else { return None };
+        let over = |i: usize| top > i && !std::iter::successors(Some(top), |&p| self.tree.nodes[p].parent).any(|p| p == i);
+        let room = |st: &ScrollState| if horizontal { st.x.max } else { st.max } > 0.0;
+        // A horizontal pan also looks inside where it starts. The chain walks up, and a finger on
+        // a horizontal row inside a vertical list starts on the list: the row is the one the
+        // finger pans, as UIKit's nested scroll views do.
+        let inside = horizontal.then(|| {
+            // A node's subtree follows it, so the row inside the list has the higher index.
+            self.tree.nodes.iter().enumerate().rev().find(|(i, n)| {
+                *i != top && self.is_scroll_viewport(*i, true) && self.node_contains(*i, x, y)
+                    && std::iter::successors(Some(*i), |&p| self.tree.nodes[p].parent).any(|p| p == top)
+                    && self.scroll.scrolls.get(&n.id).is_some_and(room)
+            }).map(|(_, n)| n.id)
+        }).flatten();
+        inside.or_else(|| self.scroll_in_chain(Some(top), horizontal, room))
+            .filter(|&id| self.tree.node_index.get(&id).is_none_or(|&i| !over(i)))
     }
 
     /// The vertical viewport a delta `dy` at (x, y) starts a run on: from where a gesture there
