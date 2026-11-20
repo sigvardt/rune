@@ -235,6 +235,80 @@ fn a_fling_carries_as_far_as_native() {
     }
 }
 
+/// One finger's samples, fed to both wheels: where it was, and when. The same list drives the
+/// release speed UIKit's pan reports and the speed Rune throws with.
+struct Fling {
+    /// Travel along the pan, and the event's time. The finger goes down at the first sample and
+    /// lifts at the last, and neither of those two counts toward the speed.
+    samples: Vec<(f32, f64)>,
+}
+
+impl Fling {
+    /// What UIKit's pan reports for these samples: a fifth of the newest move and the rest the
+    /// move before it. The two recorded drags this was measured on are
+    /// [`a_lifted_finger_throws_with_the_speed_uikit_gives_the_same_drag`](crate::runtime::input::touch::tests).
+    fn uikit(&self) -> f32 {
+        let moved: Vec<(f32, f64)> = self.samples.iter().copied().skip(1).take(self.samples.len() - 2).collect();
+        let seg = |i: usize| (moved[i].0 - moved[i - 1].0) / (moved[i].1 - moved[i - 1].1) as f32;
+        let n = moved.len();
+        0.2 * seg(n - 1) + 0.8 * seg(n - 2)
+    }
+
+    fn play(&self, rt: &mut Runtime<St>) {
+        let (y0, t0) = self.samples[0];
+        rt.touch(1, TouchPhase::Started, 150.0, 208.0, t0);
+        for (at, time) in self.samples.iter().skip(1) {
+            rt.touch(1, TouchPhase::Moved, 150.0, 208.0 + (at - y0), *time);
+            rt.frame(1.0 / 60.0);
+        }
+        let (end, tend) = self.samples[self.samples.len() - 1];
+        rt.touch(1, TouchPhase::Ended, 150.0, 208.0 + (end - y0), tend);
+        for _ in 0..600 { rt.frame(1.0 / 60.0); }
+    }
+}
+
+/// The rows a coast of `speed` points a second settles on, past the rows the finger itself
+/// travelled: UIScrollView's own deceleration (`-1000 * ln(0.998)`), then the nearest row.
+fn coast_rows(speed: f32, travelled: f32) -> i64 {
+    let travel = f64::from(-speed) / 2.002;
+    let coast = if travel.abs() > 4.0 * f64::from(PITCH) { travel } else { 0.0 };
+    ((f64::from(travelled) + coast) / f64::from(PITCH)).round() as i64
+}
+
+/// agent-device's `gesture fling` (0.21.31) as its plan describes it: the finger travels the
+/// distance in a tenth of a second, the pointer is held for the plan's own tenth, and it lifts.
+/// Sampled at 60 Hz, which is the stream both wheels are asked with below.
+fn agent_fling(dy: f32) -> Fling {
+    let mut samples = vec![(0.0, 1.0)];
+    let frames = (0.2 * 60.0) as usize;
+    for i in 1..frames {
+        let t = i as f64 / 60.0;
+        samples.push((dy * (t / 0.1).min(1.0) as f32, 1.0 + t));
+    }
+    samples.push((dy, 1.0 + frames as f64 / 60.0));
+    Fling { samples }
+}
+
+/// One sample stream, fed once to UIKit's estimate and once to Rune: the two agree on it. The
+/// finger travels at one speed and then holds still, so the last two moves are both still and both
+/// estimates throw nothing. The wheel then rests on the row under the finger: 100 points is three
+/// rows and 150 is five, on a wheel that loops and on one that stops. #375 measured ten and sixteen
+/// on this gesture, so the samples XCTest delivered there are not this stream.
+#[test]
+fn the_same_fling_lands_where_both_estimates_land() {
+    for dy in [-100.0_f32, -150.0] {
+        let fling = agent_fling(dy);
+        let expect = coast_rows(fling.uikit(), -dy);
+        for looped in [false, true] {
+            let mut rt = if looped { open(true, 10) } else { year() };
+            let start = rt.state.wheel.row;
+            fling.play(&mut rt);
+            assert_eq!(rt.scroll_y_of(if looped { "months" } else { "year" }) % PITCH, 0.0, "on a row");
+            assert_eq!(rt.state.wheel.row - start, expect, "{dy} points, UIKit's estimate and Rune's (looped {looped})");
+        }
+    }
+}
+
 /// The band's row is the wheel's own middle, [`BAND`] tall, filled with the band's colour over
 /// the dim rows.
 #[test]
