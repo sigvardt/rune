@@ -51,6 +51,10 @@ struct Finger {
     /// The newest move's own speed, which the next move weighs against its own.
     segment: Option<f32>,
     mode: Mode,
+    /// The travel along the pan's axis that crossing the slop took, which the viewport never
+    /// follows: it moves from where the pan began, as UIScrollView's and Android's do, rather
+    /// than jumping to the finger (a short fling turned a wheel a row further than UIKit's).
+    slop: f32,
     /// When (`now_clock`), still pending, it becomes a long press.
     hold_due: f64,
 }
@@ -113,12 +117,12 @@ impl<S: 'static> Runtime<S> {
         // `El::touch_drags_at_once`: a drag from the first move, and no long press to cut it.
         if self.press_drags_at_once() {
             self.touch_scroll_end(scroll, 0.0);
-            self.touch.finger = Some(Finger { id, origin: (x, y), last: 0.0, at: time, velocity: 0.0, segment: None, mode: Mode::Drag, hold_due: f64::INFINITY });
+            self.touch.finger = Some(Finger { id, origin: (x, y), last: 0.0, at: time, velocity: 0.0, segment: None, mode: Mode::Drag, slop: 0.0, hold_due: f64::INFINITY });
             return;
         }
         let hold_due = self.now_clock() + LONG_PRESS;
         self.wake_at(hold_due);
-        self.touch.finger = Some(Finger { id, origin: (x, y), last: 0.0, at: time, velocity: 0.0, segment: None, mode: Mode::Pending { scroll }, hold_due });
+        self.touch.finger = Some(Finger { id, origin: (x, y), last: 0.0, at: time, velocity: 0.0, segment: None, mode: Mode::Pending { scroll }, slop: 0.0, hold_due });
     }
 
     fn touch_move(&mut self, id: u64, x: f32, y: f32, time: f64) {
@@ -133,6 +137,9 @@ impl<S: 'static> Runtime<S> {
                 None => Mode::Drag,
             };
             if !drags { self.drop_press_selection(); }
+            let f = self.touch.finger.as_mut().unwrap();
+            let along = if f.mode.horizontal() { dx } else { dy };
+            f.slop = along * TOUCH_SLOP / dx.hypot(dy);
         }
         let f = self.touch.finger.as_mut().unwrap();
         let along = if f.mode.horizontal() { dx } else { dy };
@@ -143,8 +150,9 @@ impl<S: 'static> Runtime<S> {
             f.segment = Some(segment);
         }
         (f.last, f.at) = (along, time);
+        let slop = f.slop;
         match f.mode {
-            Mode::Pan { scroll, .. } => self.touch_scroll_move(scroll, along),
+            Mode::Pan { scroll, .. } => self.touch_scroll_move(scroll, along - slop),
             Mode::Drag => self.pointer_move(x, y),
             Mode::Pending { .. } | Mode::Menu => {}
         }
@@ -264,7 +272,7 @@ mod tests {
         rt.touch(1, TouchPhase::Moved, 100.0, 150.0, 0.01);
         rt.touch(1, TouchPhase::Ended, 100.0, 150.0, 0.5);
         for _ in 0..30 { rt.frame(1.0 / 60.0); }
-        assert_eq!(offset(&rt), 50.0);
+        assert_eq!(offset(&rt), 50.0 - f64::from(TOUCH_SLOP), "the 50 points the finger moved, less the slop");
     }
 
     #[test]
@@ -446,5 +454,22 @@ mod tests {
         rt.touch(2, TouchPhase::Started, 20.0, 20.0, 1.0);
         rt.touch(2, TouchPhase::Moved, 60.0, 20.0, 1.01);
         assert_eq!(rt.touch.finger.as_ref().map(|f| f.mode), Some(Mode::Drag), "on an element that drags it holds no viewport");
+    }
+
+    #[test]
+    fn a_pan_moves_its_viewport_from_where_it_crossed_the_slop() {
+        let mut rt = rig();
+        let list = rt.nodes.iter().find(|n| n.key.as_deref() == Some("list")).unwrap().id;
+        rt.touch(1, TouchPhase::Started, 100.0, 200.0, 0.0);
+        rt.touch(1, TouchPhase::Moved, 100.0, 180.0, 0.01);
+        let f = rt.touch.finger.as_ref().unwrap();
+        assert_eq!(f.mode, Mode::Pan { scroll: list, horizontal: false });
+        assert_eq!(f.slop, -TOUCH_SLOP, "straight up, the whole slop lies along the axis");
+        assert!((offset(&rt) - 12.0).abs() < 1e-3, "20 points up less the slop: {}", offset(&rt));
+        rt.touch(1, TouchPhase::Ended, 100.0, 180.0, 0.02);
+        rt.touch(2, TouchPhase::Started, 100.0, 200.0, 1.0);
+        rt.touch(2, TouchPhase::Moved, 106.0, 208.0, 1.01);
+        let f = rt.touch.finger.as_ref().unwrap();
+        assert!((f.slop - 0.8 * TOUCH_SLOP).abs() < 1e-4, "on a slant only its share along the axis: {}", f.slop);
     }
 }

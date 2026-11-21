@@ -378,7 +378,7 @@ mod tests {
                 .children((0..50).map(|i| crate::el().key(format!("r{i}")).w_full().h(40.0))))
         }
         for hz in [60.0, 120.0] {
-            for (drag, ms) in [(-13.0, 400.0), (-37.0, 300.0), (-90.0, 120.0), (-150.0, 90.0), (60.0, 100.0), (-25.0, 2000.0)] {
+            for (drag, ms) in [(-13.0, 400.0), (-37.0, 300.0), (-90.0, 120.0), (-150.0, 90.0), (60.0, 100.0), (-33.0, 2000.0)] {
                 let mut rt = Runtime::new((), view, (200.0, 200.0), Env::default());
                 rt.frame(0.0);
                 let id = rt.nodes.iter().find(|n| n.key.as_deref() == Some("wheel")).unwrap().id;
@@ -387,7 +387,7 @@ mod tests {
                 let steps = (ms / 1000.0 * hz) as usize;
                 rt.touch(1, crate::TouchPhase::Started, 100.0, 100.0, 0.0);
                 for i in 1..=steps {
-                    // the last one moves its 25 points in a tenth of a second, then holds still
+                    // the last one moves its 33 points (25 past the slop) in a tenth of a second, then holds still
                     let part = if ms >= 2000.0 { (i as f32 / (0.1 * hz as f32)).min(1.0) } else { i as f32 / steps as f32 };
                     rt.touch(1, crate::TouchPhase::Moved, 100.0, 100.0 + drag * part, i as f64 / hz);
                     rt.frame(1.0 / hz);
