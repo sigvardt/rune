@@ -161,6 +161,12 @@ impl<S: 'static> Runtime<S> {
     fn touch_up(&mut self, id: u64, x: f32, y: f32, time: f64, cancelled: bool) {
         let Some(f) = self.touch.finger.take_if(|f| f.id == id) else { return };
         let pan = matches!(f.mode, Mode::Pan { .. });
+        // The lift's own place counts, as UIKit's pan counts it: it lies a few points past the
+        // last move of a fling, which the viewport would otherwise never follow.
+        if let Mode::Pan { scroll, horizontal } = f.mode && !cancelled {
+            let along = if horizontal { x - f.origin.0 } else { y - f.origin.1 };
+            if along != f.last { self.touch_scroll_move(scroll, along - f.slop); }
+        }
         let velocity = if pan && !cancelled && time - f.at < FLING_HOLD { f.velocity } else { 0.0 };
         self.touch_scroll_end(f.mode.scroll(), velocity);
         if f.mode == Mode::Menu {
@@ -471,5 +477,15 @@ mod tests {
         rt.touch(2, TouchPhase::Moved, 106.0, 208.0, 1.01);
         let f = rt.touch.finger.as_ref().unwrap();
         assert!((f.slop - 0.8 * TOUCH_SLOP).abs() < 1e-4, "on a slant only its share along the axis: {}", f.slop);
+    }
+
+    #[test]
+    fn a_lift_past_the_last_move_carries_the_viewport_there() {
+        let mut rt = rig();
+        rt.touch(1, TouchPhase::Started, 100.0, 200.0, 0.0);
+        rt.touch(1, TouchPhase::Moved, 100.0, 180.0, 0.01);
+        rt.touch(1, TouchPhase::Ended, 100.0, 175.0, 0.5);
+        for _ in 0..30 { rt.frame(1.0 / 60.0); }
+        assert!((offset(&rt) - 17.0).abs() < 1e-3, "25 points up less the slop: {}", offset(&rt));
     }
 }
