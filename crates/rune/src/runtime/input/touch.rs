@@ -170,6 +170,12 @@ impl RuntimeCore {
     fn touch_up(&mut self, app: &dyn ViewDriver, id: u64, x: f32, y: f32, time: f64, cancelled: bool) {
         let Some(f) = self.pointer.touch.finger.take_if(|f| f.id == id) else { return };
         let pan = matches!(f.mode, Mode::Pan { .. });
+        // The lift's own place counts, as UIKit's pan counts it: it lies a few points past the
+        // last move of a fling, which the viewport would otherwise never follow.
+        if let Mode::Pan { scroll, horizontal } = f.mode && !cancelled {
+            let along = if horizontal { x - f.origin.0 } else { y - f.origin.1 };
+            if along != f.last { self.touch_scroll_move(scroll, along - f.slop); }
+        }
         let velocity = if pan && !cancelled && time - f.at < FLING_HOLD { f.velocity } else { 0.0 };
         self.touch_scroll_end(f.mode.scroll(), velocity);
         if f.mode == Mode::Menu {

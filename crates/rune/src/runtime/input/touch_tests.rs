@@ -262,3 +262,13 @@ fn a_pan_moves_its_viewport_from_where_it_crossed_the_slop() {
     let f = rt.pointer.touch.finger.as_ref().unwrap();
     assert!((f.slop - 0.8 * TOUCH_SLOP).abs() < 1e-4, "on a slant only its share along the axis: {}", f.slop);
 }
+
+#[test]
+fn a_lift_past_the_last_move_carries_the_viewport_there() {
+    let mut rt = rig();
+    rt.touch(1, TouchPhase::Started, 100.0, 200.0, 0.0);
+    rt.touch(1, TouchPhase::Moved, 100.0, 180.0, 0.01);
+    rt.touch(1, TouchPhase::Ended, 100.0, 175.0, 0.5);
+    for _ in 0..30 { rt.frame(1.0 / 60.0); }
+    assert!((offset(&rt) - 17.0).abs() < 1e-3, "25 points up less the slop: {}", offset(&rt));
+}
