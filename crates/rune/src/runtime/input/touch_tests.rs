@@ -206,7 +206,7 @@ fn a_finger_held_still_before_lifting_throws_nothing() {
     rt.touch(1, TouchPhase::Moved, 100.0, 150.0, 0.01);
     rt.touch(1, TouchPhase::Ended, 100.0, 150.0, 0.5);
     for _ in 0..30 { rt.frame(1.0 / 60.0); }
-    assert_eq!(offset(&rt), 50.0);
+    assert_eq!(offset(&rt), 50.0 - f64::from(TOUCH_SLOP), "the 50 points the finger moved, less the slop");
 }
 
 #[test]
@@ -244,4 +244,21 @@ fn a_finger_past_the_slop_picks_one_mode_with_only_its_own_data() {
     rt.touch(2, TouchPhase::Started, 20.0, 20.0, 1.0);
     rt.touch(2, TouchPhase::Moved, 60.0, 20.0, 1.01);
     assert_eq!(rt.pointer.touch.finger.as_ref().map(|f| f.mode), Some(Mode::Drag), "on an element that drags it holds no viewport");
+}
+
+#[test]
+fn a_pan_moves_its_viewport_from_where_it_crossed_the_slop() {
+    let mut rt = rig();
+    let list = rt.tree.nodes.iter().find(|n| n.key.as_deref() == Some("list")).unwrap().id;
+    rt.touch(1, TouchPhase::Started, 100.0, 200.0, 0.0);
+    rt.touch(1, TouchPhase::Moved, 100.0, 180.0, 0.01);
+    let f = rt.pointer.touch.finger.as_ref().unwrap();
+    assert_eq!(f.mode, Mode::Pan { scroll: list, horizontal: false });
+    assert_eq!(f.slop, -TOUCH_SLOP, "straight up, the whole slop lies along the axis");
+    assert!((offset(&rt) - 12.0).abs() < 1e-3, "20 points up less the slop: {}", offset(&rt));
+    rt.touch(1, TouchPhase::Ended, 100.0, 180.0, 0.02);
+    rt.touch(2, TouchPhase::Started, 100.0, 200.0, 1.0);
+    rt.touch(2, TouchPhase::Moved, 106.0, 208.0, 1.01);
+    let f = rt.pointer.touch.finger.as_ref().unwrap();
+    assert!((f.slop - 0.8 * TOUCH_SLOP).abs() < 1e-4, "on a slant only its share along the axis: {}", f.slop);
 }

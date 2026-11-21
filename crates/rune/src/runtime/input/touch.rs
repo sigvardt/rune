@@ -51,6 +51,10 @@ struct Finger {
     /// The newest move's own speed, which the next move weighs against its own.
     segment: Option<f32>,
     mode: Mode,
+    /// The travel along the pan's axis that crossing the slop took, which the viewport never
+    /// follows: it moves from where the pan began, as UIScrollView's and Android's do, rather
+    /// than jumping to the finger (a short fling turned a wheel a row further than UIKit's).
+    slop: f32,
     /// When (`now_clock`), still pending, it becomes a long press.
     hold_due: f64,
 }
@@ -122,12 +126,12 @@ impl RuntimeCore {
         // `El::touch_drags_at_once`: a drag from the first move, and no long press to cut it.
         if self.press_drags_at_once() {
             self.touch_scroll_end(scroll, 0.0);
-            self.pointer.touch.finger = Some(Finger { id, origin: (x, y), last: 0.0, at: time, velocity: 0.0, segment: None, mode: Mode::Drag, hold_due: f64::INFINITY });
+            self.pointer.touch.finger = Some(Finger { id, origin: (x, y), last: 0.0, at: time, velocity: 0.0, segment: None, mode: Mode::Drag, slop: 0.0, hold_due: f64::INFINITY });
             return;
         }
         let hold_due = self.now_clock() + LONG_PRESS;
         self.wake_at(hold_due);
-        self.pointer.touch.finger = Some(Finger { id, origin: (x, y), last: 0.0, at: time, velocity: 0.0, segment: None, mode: Mode::Pending { scroll }, hold_due });
+        self.pointer.touch.finger = Some(Finger { id, origin: (x, y), last: 0.0, at: time, velocity: 0.0, segment: None, mode: Mode::Pending { scroll }, slop: 0.0, hold_due });
     }
 
     fn touch_move(&mut self, app: &dyn ViewDriver, id: u64, x: f32, y: f32, time: f64) {
@@ -142,6 +146,9 @@ impl RuntimeCore {
                 None => Mode::Drag,
             };
             if !drags { self.drop_press_selection(); }
+            let f = self.pointer.touch.finger.as_mut().unwrap();
+            let along = if f.mode.horizontal() { dx } else { dy };
+            f.slop = along * TOUCH_SLOP / dx.hypot(dy);
         }
         let f = self.pointer.touch.finger.as_mut().unwrap();
         let along = if f.mode.horizontal() { dx } else { dy };
@@ -152,8 +159,9 @@ impl RuntimeCore {
             f.segment = Some(segment);
         }
         (f.last, f.at) = (along, time);
+        let slop = f.slop;
         match f.mode {
-            Mode::Pan { scroll, .. } => self.touch_scroll_move(scroll, along),
+            Mode::Pan { scroll, .. } => self.touch_scroll_move(scroll, along - slop),
             Mode::Drag => self.pointer_move(app, x, y),
             Mode::Pending { .. } | Mode::Menu => {}
         }
